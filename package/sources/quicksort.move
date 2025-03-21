@@ -1,4 +1,4 @@
-module launchpad::quicksort;
+module nexus_launchpad::quicksort;
 
 public fun quicksort<T>(v1: &mut vector<u128>, v2: &mut vector<T>, low: u64, high: u64) {
     assert!(high < vector::length(v1), 1);

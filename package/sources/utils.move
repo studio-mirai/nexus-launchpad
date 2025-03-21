@@ -1,4 +1,4 @@
-module launchpad::utils;
+module nexus_launchpad::utils;
 
 public(package) fun ts_to_range(start_ts: u64, end_ts: u64): u128 {
     ((start_ts as u128) << 64) | (end_ts as u128)

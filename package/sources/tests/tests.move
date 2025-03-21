@@ -1,26 +1,21 @@
 #[test_only]
-module launchpad::tests;
+module nexus_launchpad::tests;
+
+use nexus_launchpad::launch::{Self, Launch, LaunchAdminCap, LaunchOperatorCap, KioskRequirement};
+use nexus_launchpad::mint;
+use nexus_launchpad::phase::{Self, Phase, PhaseKind, SchedulePhasePromise};
+use nexus_launchpad::test_nft::{Self, TestNft};
+use nexus_launchpad::whitelist::{Self, Whitelist};
+use sui::clock::{Self, Clock};
+use sui::coin::{Self, Coin};
+use sui::kiosk::{Kiosk, KioskOwnerCap};
+use sui::package::Publisher;
+use sui::random::{Self, Random};
+use sui::sui::SUI;
+use sui::test_scenario::{Self as scen, Scenario};
+use sui::test_utils::{assert_eq, destroy};
 
 // === imports ===
-
-use sui::{
-    clock::{Self, Clock},
-    coin::{Self, Coin},
-    kiosk::{Kiosk, KioskOwnerCap},
-    package::{Publisher},
-    random::{Self, Random},
-    sui::{SUI},
-    test_scenario::{Self as scen, Scenario},
-    test_utils::{assert_eq, destroy},
-};
-
-use launchpad::{
-    test_nft::{Self, TestNft},
-    launch::{Self, Launch, LaunchAdminCap, LaunchOperatorCap, KioskRequirement},
-    phase::{Self, Phase, PhaseKind, SchedulePhasePromise},
-    mint::{Self},
-    whitelist::{Self, Whitelist},
-};
 
 // === constants ===
 
@@ -53,11 +48,7 @@ public struct TestRunner {
 }
 
 /// create a Launch in the SUPPLYING state
-fun begin(
-    launch_total_supply: u64,
-    kiosk_req: launch::KioskRequirement,
-): TestRunner
-{
+fun begin(launch_total_supply: u64, kiosk_req: launch::KioskRequirement): TestRunner {
     // random
     let mut scen = scen::begin(@0x0);
     random::create_for_testing(scen.ctx());
@@ -75,12 +66,7 @@ fun begin(
     // launch
     scen.next_tx(ADMIN);
     let publisher = scen.take_from_sender<Publisher>();
-    let (
-        launch,
-        launch_admin_cap,
-        launch_operator_cap,
-        share_promise,
-    ) = launch::new<TestNft>(
+    let (launch, launch_admin_cap, launch_operator_cap, share_promise) = launch::new<TestNft>(
         &publisher,
         launch_total_supply,
         kiosk_req,
@@ -100,11 +86,7 @@ fun begin(
 }
 
 /// create a Launch, add items to it, schedule a Phase, set LaunchState::ACTIVE
-fun begin_with_phase(
-    kiosk_req: KioskRequirement,
-    phase_kind: PhaseKind,
-): TestRunner
-{
+fun begin_with_phase(kiosk_req: KioskRequirement, phase_kind: PhaseKind): TestRunner {
     // LaunchState::SUPPLYING
 
     let mut runner = begin(LAUNCH_SUPPLY, kiosk_req);
@@ -134,10 +116,7 @@ fun begin_with_phase(
 // `runner.launch__add_items;` calls `launch::add_items()`.
 // `runner.phase__new__default;` calls `phase::new()` using default values.
 
-fun launch__add_items(
-    runner: &mut TestRunner,
-    count: u64,
-) {
+fun launch__add_items(runner: &mut TestRunner, count: u64) {
     let items = vector::tabulate!(
         count,
         |i| test_nft::new_test_nft(
@@ -145,20 +124,16 @@ fun launch__add_items(
             i + 1,
             b"https://images.stockcake.com/public/a/8/e/a8e29d30-9da7-418b-932b-c12c3260c2ef_medium/abstract-geometric-design-stockcake.jpg",
             runner.scen.ctx(),
-        )
+        ),
     );
     runner.launch.add_items(&runner.launch_operator_cap, items);
 }
 
-fun launch__set_scheduling_state(
-    runner: &mut TestRunner,
-) {
+fun launch__set_scheduling_state(runner: &mut TestRunner) {
     runner.launch.set_scheduling_state(&runner.launch_operator_cap, &runner.clock);
 }
 
-fun launch__set_active_state(
-    runner: &mut TestRunner,
-) {
+fun launch__set_active_state(runner: &mut TestRunner) {
     runner.launch.set_active_state(&runner.launch_operator_cap);
 }
 
@@ -177,11 +152,7 @@ fun phase__new__default(
     return (phase, schedule_promise)
 }
 
-fun phase__add_payment_type<C>(
-    runner: &TestRunner,
-    phase: &mut Phase<TestNft>,
-    price: u64,
-) {
+fun phase__add_payment_type<C>(runner: &TestRunner, phase: &mut Phase<TestNft>, price: u64) {
     phase.add_payment_type<TestNft, C>(&runner.launch_operator_cap, price, &runner.clock);
 }
 
@@ -204,15 +175,17 @@ fun whitelist__new(
     runner: &mut TestRunner,
     sender: address,
     count: u64,
-): vector<Whitelist<TestNft>>
-{
+): vector<Whitelist<TestNft>> {
     runner.scen.next_tx(sender);
     let mut phase: Phase<TestNft> = runner.scen.take_shared();
     let wls = vector::tabulate!(
         count,
         |_| whitelist::new<TestNft>(
-            &runner.launch_operator_cap, &mut runner.launch, &mut phase, runner.scen.ctx(),
-        )
+            &runner.launch_operator_cap,
+            &mut runner.launch,
+            &mut phase,
+            runner.scen.ctx(),
+        ),
     );
     scen::return_shared(phase);
     return wls
@@ -271,7 +244,7 @@ fun mint__mint_and_place(
         wls,
         random,
         clock,
-        runner.scen.ctx()
+        runner.scen.ctx(),
     );
 }
 
@@ -295,8 +268,7 @@ fun mint__mint_and_place__with_new_sui(
 // === tests: mint: basic ===
 
 #[test]
-fun test_mint_kiosk_none()
-{
+fun test_mint_kiosk_none() {
     let mut runner = begin_with_phase(
         launch::new_kiosk_requirement_none(),
         phase::new_phase_kind_public(),
@@ -312,8 +284,7 @@ fun test_mint_kiosk_none()
 }
 
 #[test]
-fun test_mint_kiosk_none_wl()
-{
+fun test_mint_kiosk_none_wl() {
     let mut runner = begin_with_phase(
         launch::new_kiosk_requirement_none(),
         phase::new_phase_kind_whitelist(),
@@ -330,8 +301,7 @@ fun test_mint_kiosk_none_wl()
 }
 
 #[test]
-fun test_mint_kiosk_place()
-{
+fun test_mint_kiosk_place() {
     let mut runner = begin_with_phase(
         launch::new_kiosk_requirement_place(),
         phase::new_phase_kind_public(),
@@ -355,8 +325,7 @@ fun test_mint_kiosk_place()
 // === tests: mint: various ===
 
 #[test]
-fun test_mint_above_max_mint_allocation()
-{
+fun test_mint_above_max_mint_allocation() {
     let mut runner = begin_with_phase(
         launch::new_kiosk_requirement_none(),
         phase::new_phase_kind_public(),
@@ -376,8 +345,7 @@ fun test_mint_above_max_mint_allocation()
 }
 
 #[test]
-fun test_mint_payment_refund()
-{
+fun test_mint_payment_refund() {
     let mut runner = begin_with_phase(
         launch::new_kiosk_requirement_none(),
         phase::new_phase_kind_public(),
@@ -402,8 +370,7 @@ fun test_mint_payment_refund()
 // === tests: mint: errors ===
 
 #[test, expected_failure(abort_code = launch::EPhaseNotStarted)]
-fun test_mint_e_phase_not_started()
-{
+fun test_mint_e_phase_not_started() {
     let mut runner = begin_with_phase(
         launch::new_kiosk_requirement_none(),
         phase::new_phase_kind_public(),
@@ -417,8 +384,7 @@ fun test_mint_e_phase_not_started()
 }
 
 #[test, expected_failure(abort_code = launch::EPhaseEnded)]
-fun test_mint_e_phase_ended()
-{
+fun test_mint_e_phase_ended() {
     let mut runner = begin_with_phase(
         launch::new_kiosk_requirement_none(),
         phase::new_phase_kind_public(),
@@ -432,8 +398,7 @@ fun test_mint_e_phase_ended()
 }
 
 #[test, expected_failure(abort_code = mint::EPhaseMaxMintCountExceeded)]
-fun test_mint_e_phase_max_mint_count_exceeded()
-{
+fun test_mint_e_phase_max_mint_count_exceeded() {
     let mut runner = begin_with_phase(
         launch::new_kiosk_requirement_none(),
         phase::new_phase_kind_public(),
@@ -459,8 +424,7 @@ fun test_mint_e_phase_max_mint_count_exceeded()
 }
 
 #[test, expected_failure(abort_code = mint::EIncorrectPaymentAmount)]
-fun test_mint_e_incorrect_payment_amount()
-{
+fun test_mint_e_incorrect_payment_amount() {
     let mut runner = begin_with_phase(
         launch::new_kiosk_requirement_none(),
         phase::new_phase_kind_public(),
@@ -479,8 +443,7 @@ fun test_mint_e_incorrect_payment_amount()
 }
 
 #[test, expected_failure(abort_code = mint::EIncorrectWhitelistCount)]
-fun test_mint_e_incorrect_whitelist_count()
-{
+fun test_mint_e_incorrect_whitelist_count() {
     let mut runner = begin_with_phase(
         launch::new_kiosk_requirement_none(),
         phase::new_phase_kind_whitelist(),
@@ -496,8 +459,7 @@ fun test_mint_e_incorrect_whitelist_count()
 }
 
 #[test, expected_failure(abort_code = mint::EIncorrectWhitelistForPhase)]
-fun test_mint_e_incorrect_whitelist_for_phase()
-{
+fun test_mint_e_incorrect_whitelist_for_phase() {
     // LaunchState::SUPPLYING
 
     let mut runner = begin(LAUNCH_SUPPLY, launch::new_kiosk_requirement_none());
@@ -566,8 +528,7 @@ fun test_mint_e_incorrect_whitelist_for_phase()
 // === tests: phase: errors ===
 
 #[test, expected_failure(abort_code = phase::EPhaseMaxCountExceedsLaunchSupply)]
-fun test_schedule_e_phase_max_count_exceeds_launch_supply()
-{
+fun test_schedule_e_phase_max_count_exceeds_launch_supply() {
     // LaunchState::SUPPLYING
 
     let mut runner = begin(LAUNCH_SUPPLY, launch::new_kiosk_requirement_none());
@@ -606,30 +567,19 @@ fun test_schedule_e_phase_max_count_exceeds_launch_supply()
 
 // === helpers for sui modules ===
 
-fun mint_coin<C>(
-    runner: &mut TestRunner,
-    value: u64,
-): Coin<C> {
+fun mint_coin<C>(runner: &mut TestRunner, value: u64): Coin<C> {
     return coin::mint_for_testing<C>(value, runner.scen.ctx())
 }
 
-fun assert_owns_nfts(
-    runner: &mut TestRunner,
-    sender: address,
-    expected_quantity: u64,
-) {
+fun assert_owns_nfts(runner: &mut TestRunner, sender: address, expected_quantity: u64) {
     runner.scen.next_tx(sender);
     let nft_ids = runner.scen.ids_for_sender<TestNft>();
     assert_eq(expected_quantity, nft_ids.length());
 }
 
-public fun assert_owns_sui(
-    runner: &mut TestRunner,
-    owner: address,
-    sui_value: u64,
-) {
+public fun assert_owns_sui(runner: &mut TestRunner, owner: address, sui_value: u64) {
     runner.scen.next_tx(owner);
     let coin = runner.scen.take_from_sender<Coin<SUI>>();
-    assert_eq( coin.value(), sui_value );
+    assert_eq(coin.value(), sui_value);
     transfer::public_transfer(coin, owner);
 }

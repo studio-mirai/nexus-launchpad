@@ -1,7 +1,7 @@
-module launchpad::launch;
+module nexus_launchpad::launch;
 
-use launchpad::quicksort::quicksort;
-use launchpad::utils::{ts_to_range, range_to_ts};
+use nexus_launchpad::quicksort::quicksort;
+use nexus_launchpad::utils::{ts_to_range, range_to_ts};
 use std::type_name::{Self, TypeName};
 use sui::bag::{Self, Bag};
 use sui::balance::Balance;
@@ -263,7 +263,10 @@ public fun add_items<T: key + store>(
 
     match (self.state) {
         LaunchState::SUPPLYING => {
-            assert!(self.items.length() + items.length() <= self.total_supply, EExceedsCurrentSupply);
+            assert!(
+                self.items.length() + items.length() <= self.total_supply,
+                EExceedsCurrentSupply,
+            );
 
             emit(ItemsAddedEvent {
                 launch_id: self.id(),

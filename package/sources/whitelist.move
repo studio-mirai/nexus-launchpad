@@ -1,7 +1,7 @@
-module launchpad::whitelist;
+module nexus_launchpad::whitelist;
 
-use launchpad::launch::{Launch, LaunchOperatorCap};
-use launchpad::phase::Phase;
+use nexus_launchpad::launch::{Launch, LaunchOperatorCap};
+use nexus_launchpad::phase::Phase;
 use sui::event::emit;
 use sui::package;
 

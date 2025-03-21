@@ -1,7 +1,6 @@
-module launchpad::phase;
+module nexus_launchpad::phase;
 
-use launchpad::launch::{Launch, LaunchOperatorCap};
-use std::string::String;
+use nexus_launchpad::launch::{Launch, LaunchOperatorCap};
 use std::type_name::{Self, TypeName};
 use sui::clock::Clock;
 use sui::event::emit;
@@ -19,16 +18,12 @@ public struct Phase<phantom T: key + store> has key {
     state: PhaseState,
     // The ID of the launch that the phase belongs to.
     launch_id: ID,
-    // The name of the phase.
-    name: Option<String>,
-    // The description of the phase.
-    description: Option<String>,
     // Whether the minter can mint multiple items at once.
     is_allow_bulk_mint: bool,
     // The maximum number of mints that can be made by a single address.
-    max_mint_count_addr: u64,
+    max_mint_allocation: u64,
     // The maximum number of mints that can be made by in the phase.
-    max_mint_count_phase: u64,
+    max_mint_count: u64,
     // The current mint count for the phase._
     current_mint_count: u64,
     // The number of mints that have been made by each address.
@@ -57,8 +52,8 @@ public enum PhaseState has copy, drop, store {
 public struct PhaseCreatedEvent has copy, drop, store {
     phase_id: ID,
     is_allow_bulk_mint: bool,
-    max_mint_count_addr: u64,
-    max_mint_count_phase: u64,
+    max_mint_allocation: u64,
+    max_mint_count: u64,
 }
 
 public struct PhaseDestroyedEvent has copy, drop, store {
@@ -112,27 +107,23 @@ fun init(otw: PHASE, ctx: &mut TxContext) {
 public fun new<T: key + store>(
     cap: &LaunchOperatorCap,
     kind: PhaseKind,
-    name: Option<String>,
-    description: Option<String>,
-    max_mint_count_addr: u64,
-    max_mint_count_phase: u64,
+    max_mint_allocation: u64,
+    max_mint_count: u64,
     is_allow_bulk_mint: bool,
     ctx: &mut TxContext,
 ): (Phase<T>, SchedulePhasePromise) {
-    assert!(max_mint_count_phase > 0, EInvalidMaxMintCount);
-    assert!(max_mint_count_addr > 0, EInvalidMaxMintAllocation);
-    assert!(max_mint_count_addr < max_mint_count_phase, EInvalidMaxMintAllocation);
+    assert!(max_mint_count > 0, EInvalidMaxMintCount);
+    assert!(max_mint_allocation > 0, EInvalidMaxMintAllocation);
+    assert!(max_mint_allocation < max_mint_count, EInvalidMaxMintAllocation);
 
     let phase = Phase<T> {
         id: object::new(ctx),
         kind: kind,
         state: PhaseState::CREATED,
         launch_id: cap.launch_id(),
-        name: name,
-        description: description,
         is_allow_bulk_mint: is_allow_bulk_mint,
-        max_mint_count_addr: max_mint_count_addr,
-        max_mint_count_phase: max_mint_count_phase,
+        max_mint_allocation: max_mint_allocation,
+        max_mint_count: max_mint_count,
         current_mint_count: 0,
         participants: table::new(ctx),
         payment_types: vec_map::empty(),
@@ -145,8 +136,8 @@ public fun new<T: key + store>(
     emit(PhaseCreatedEvent {
         phase_id: phase.id(),
         is_allow_bulk_mint: phase.is_allow_bulk_mint,
-        max_mint_count_addr: phase.max_mint_count_addr,
-        max_mint_count_phase: phase.max_mint_count_phase,
+        max_mint_allocation: phase.max_mint_allocation,
+        max_mint_count: phase.max_mint_count,
     });
 
     (phase, promise)
@@ -219,7 +210,7 @@ public fun schedule<T: key + store>(
     // Assert the start/end timestamps are valid.
     assert_valid_ts_range(start_ts, end_ts, clock);
 
-    assert!(self.max_mint_count_phase <= launch.total_supply(), EPhaseMaxCountExceedsLaunchSupply);
+    assert!(self.max_mint_count <= launch.total_supply(), EPhaseMaxCountExceedsLaunchSupply);
 
     match (self.state) {
         PhaseState::CREATED => {
@@ -357,10 +348,10 @@ public fun set_is_allow_bulk_mint<T: key + store>(
     }
 }
 
-public fun set_max_mint_count_addr<T: key + store>(
+public fun set_max_mint_allocation<T: key + store>(
     self: &mut Phase<T>,
     cap: &LaunchOperatorCap,
-    max_mint_count_addr: u64,
+    max_mint_allocation: u64,
     clock: &Clock,
 ) {
     match (self.state) {
@@ -369,17 +360,17 @@ public fun set_max_mint_count_addr<T: key + store>(
             cap.authorize(self.launch_id());
             // Assert the phase has not started.
             self.assert_not_started(clock);
-            // Update the Phase's `max_mint_count_addr` value.
-            self.max_mint_count_addr = max_mint_count_addr;
+            // Update the Phase's `max_mint_allocation` value.
+            self.max_mint_allocation = max_mint_allocation;
         },
         _ => abort EInvalidPhaseState,
     }
 }
 
-public fun set_max_mint_count_phase<T: key + store>(
+public fun set_max_mint_count<T: key + store>(
     self: &mut Phase<T>,
     cap: &LaunchOperatorCap,
-    max_mint_count_phase: u64,
+    max_mint_count: u64,
     clock: &Clock,
 ) {
     match (self.state) {
@@ -388,8 +379,8 @@ public fun set_max_mint_count_phase<T: key + store>(
             cap.authorize(self.launch_id());
             // Assert the Phase has not started.
             self.assert_not_started(clock);
-            // Update the Phase's `max_mint_count_phase` value.
-            self.max_mint_count_phase = max_mint_count_phase;
+            // Update the Phase's `max_mint_count` value.
+            self.max_mint_count = max_mint_count;
         },
         _ => abort EInvalidPhaseState,
     }
@@ -462,14 +453,6 @@ public fun launch_id<T: key + store>(self: &Phase<T>): ID {
     self.launch_id
 }
 
-public fun name<T: key + store>(self: &Phase<T>): Option<String> {
-    self.name
-}
-
-public fun description<T: key + store>(self: &Phase<T>): Option<String> {
-    self.description
-}
-
 public fun is_allow_bulk_mint<T: key + store>(self: &Phase<T>): bool {
     self.is_allow_bulk_mint
 }
@@ -481,12 +464,12 @@ public fun is_whitelist<T: key + store>(self: &Phase<T>): bool {
     }
 }
 
-public fun max_mint_count_addr<T: key + store>(self: &Phase<T>): u64 {
-    self.max_mint_count_addr
+public fun max_mint_allocation<T: key + store>(self: &Phase<T>): u64 {
+    self.max_mint_allocation
 }
 
-public fun max_mint_count_phase<T: key + store>(self: &Phase<T>): u64 {
-    self.max_mint_count_phase
+public fun max_mint_count<T: key + store>(self: &Phase<T>): u64 {
+    self.max_mint_count
 }
 
 public fun payment_types<T: key + store>(self: &Phase<T>): &VecMap<TypeName, u64> {
