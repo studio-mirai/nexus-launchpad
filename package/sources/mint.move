@@ -212,7 +212,7 @@ fun internal_mint<T: key + store, C>(
     // Calculate the participant's remaining mint count by substracting the participant's
     // current mint count from the phase's max mint allocation per participant.
     let participant_remaining_mint_count =
-        phase.max_mint_allocation() - phase.participant_mint_count(ctx.sender());
+        phase.max_mint_count_addr() - phase.participant_mint_count(ctx.sender());
 
     // Update the quantity to the participant's remaining mint count
     // if the requested quantity is greater than the participant's remaining mint count.
@@ -236,7 +236,7 @@ fun internal_mint<T: key + store, C>(
 
     // Assert the max mint count for the phase is not exceeded.
     assert!(
-        phase.current_mint_count() + mint_quantity <= phase.max_mint_count(),
+        phase.current_mint_count() + mint_quantity <= phase.max_mint_count_phase(),
         EPhaseMaxMintCountExceeded,
     );
 
