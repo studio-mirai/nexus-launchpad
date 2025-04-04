@@ -1,3 +1,4 @@
+// TODO: Add whitelist processing to Kiosk mint functions.
 module nexus_launchpad::mint;
 
 use nexus_launchpad::launch::Launch;
@@ -34,6 +35,30 @@ entry fun mint<T: key + store, C>(
     phase: &mut Phase<T>,
     quantity: u64,
     payment: &mut Coin<C>,
+    random: &Random,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    launch.assert_kiosk_requirement_none();
+
+    let items = internal_mint(
+        launch,
+        phase,
+        quantity,
+        payment,
+        random,
+        clock,
+        ctx,
+    );
+
+    items.destroy!(|item| transfer::public_transfer(item, ctx.sender()));
+}
+
+entry fun wl_mint<T: key + store, C>(
+    launch: &mut Launch<T>,
+    phase: &mut Phase<T>,
+    quantity: u64,
+    payment: &mut Coin<C>,
     whitelists: vector<Whitelist<T>>,
     random: &Random,
     clock: &Clock,
@@ -46,11 +71,12 @@ entry fun mint<T: key + store, C>(
         phase,
         quantity,
         payment,
-        whitelists,
         random,
         clock,
         ctx,
     );
+
+    process_whitelists(whitelists, phase, items.length(), ctx);
 
     items.destroy!(|item| transfer::public_transfer(item, ctx.sender()));
 }
@@ -60,7 +86,7 @@ entry fun mint_and_lock<T: key + store, C>(
     phase: &mut Phase<T>,
     quantity: u64,
     payment: &mut Coin<C>,
-    whitelists: vector<Whitelist<T>>,
+    //whitelists: vector<Whitelist<T>>,
     kiosk: &mut Kiosk,
     kiosk_owner_cap: &KioskOwnerCap,
     policy: &TransferPolicy<T>,
@@ -75,7 +101,6 @@ entry fun mint_and_lock<T: key + store, C>(
         phase,
         quantity,
         payment,
-        whitelists,
         random,
         clock,
         ctx,
@@ -89,7 +114,7 @@ entry fun mint_and_lock_in_new_kiosk<T: key + store, C>(
     phase: &mut Phase<T>,
     quantity: u64,
     payment: &mut Coin<C>,
-    whitelists: vector<Whitelist<T>>,
+    //whitelists: vector<Whitelist<T>>,
     policy: &TransferPolicy<T>,
     random: &Random,
     clock: &Clock,
@@ -104,7 +129,6 @@ entry fun mint_and_lock_in_new_kiosk<T: key + store, C>(
         phase,
         quantity,
         payment,
-        whitelists,
         random,
         clock,
         ctx,
@@ -127,7 +151,7 @@ entry fun mint_and_place<T: key + store, C>(
     phase: &mut Phase<T>,
     quantity: u64,
     payment: &mut Coin<C>,
-    whitelists: vector<Whitelist<T>>,
+    //whitelists: vector<Whitelist<T>>,
     kiosk: &mut Kiosk,
     kiosk_owner_cap: &KioskOwnerCap,
     random: &Random,
@@ -141,7 +165,6 @@ entry fun mint_and_place<T: key + store, C>(
         phase,
         quantity,
         payment,
-        whitelists,
         random,
         clock,
         ctx,
@@ -155,7 +178,7 @@ entry fun mint_and_place_in_new_kiosk<T: key + store, C>(
     phase: &mut Phase<T>,
     quantity: u64,
     payment: &mut Coin<C>,
-    whitelists: vector<Whitelist<T>>,
+    //whitelists: vector<Whitelist<T>>,
     random: &Random,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -169,7 +192,6 @@ entry fun mint_and_place_in_new_kiosk<T: key + store, C>(
         phase,
         quantity,
         payment,
-        whitelists,
         random,
         clock,
         ctx,
@@ -192,7 +214,7 @@ fun internal_mint<T: key + store, C>(
     phase: &mut Phase<T>,
     quantity: u64,
     payment: &mut Coin<C>,
-    mut whitelists: vector<Whitelist<T>>,
+    //mut //whitelists: vector<Whitelist<T>>,
     random: &Random,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -218,22 +240,6 @@ fun internal_mint<T: key + store, C>(
     // if the requested quantity is greater than the participant's remaining mint count.
     let mint_quantity = u64::min(quantity, participant_remaining_mint_count);
 
-    if (phase.is_whitelist()) {
-        // If the phase is a whitelist phase, assert the participant has provided
-        // enough whitelists to mint the requested quantity.
-        assert!(whitelists.length() >= mint_quantity, EIncorrectWhitelistCount);
-        // Assert the provided whitelist tickets are for the current phase.
-        whitelists.do_ref!(|wl| assert!(wl.phase_id() == phase.id(), EIncorrectWhitelistForPhase));
-        // Destroy `mint_quantity` number of whitelist tickets.
-        mint_quantity.do!(|_| whitelists.pop_back().destroy());
-    } else {
-        // Assert the whitelist vector is empty if the phase is not a whitelist phase.
-        assert!(whitelists.is_empty(), ENoWhitelistRequired);
-    };
-
-    // Destroy the empty whitelist vector.
-    whitelists.destroy!(|wl| transfer::public_transfer(wl, ctx.sender()));
-
     // Assert the max mint count for the phase is not exceeded.
     assert!(
         phase.current_mint_count() + mint_quantity <= phase.max_mint_count_phase(),
@@ -251,8 +257,6 @@ fun internal_mint<T: key + store, C>(
 
     // Deposit revenue into the Launch.
     launch.deposit_revenue(revenue);
-    // If payment balance is non-zero (happens when quantity is reduced from the requested quantity),
-    // transfer the unused payment balance back to the participant.
 
     let mut rg = random.new_generator(ctx);
 
@@ -284,4 +288,22 @@ fun internal_mint<T: key + store, C>(
     };
 
     items
+}
+
+#[allow(lint(self_transfer))]
+fun process_whitelists<T: key + store>(
+    mut whitelists: vector<Whitelist<T>>,
+    phase: &Phase<T>,
+    quantity: u64,
+    ctx: &TxContext,
+) {
+    // If the phase is a whitelist phase, assert the participant has provided
+    // enough whitelists to mint the requested quantity.
+    assert!(whitelists.length() >= quantity, EIncorrectWhitelistCount);
+    // Assert the provided whitelist tickets are for the current phase.
+    whitelists.do_ref!(|wl| assert!(wl.phase_id() == phase.id(), EIncorrectWhitelistForPhase));
+    // Destroy `mint_quantity` number of whitelist tickets.
+    quantity.do!(|_| whitelists.pop_back().destroy());
+    // Return the remaining whitelists.
+    whitelists.destroy!(|wl| transfer::public_transfer(wl, ctx.sender()));
 }
