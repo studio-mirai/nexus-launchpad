@@ -33,7 +33,7 @@ entry fun mint<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
-    payment: Coin<C>,
+    payment: &mut Coin<C>,
     whitelists: vector<Whitelist<T>>,
     random: &Random,
     clock: &Clock,
@@ -59,7 +59,7 @@ entry fun mint_and_lock<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
-    payment: Coin<C>,
+    payment: &mut Coin<C>,
     whitelists: vector<Whitelist<T>>,
     kiosk: &mut Kiosk,
     kiosk_owner_cap: &KioskOwnerCap,
@@ -88,7 +88,7 @@ entry fun mint_and_lock_in_new_kiosk<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
-    payment: Coin<C>,
+    payment: &mut Coin<C>,
     whitelists: vector<Whitelist<T>>,
     policy: &TransferPolicy<T>,
     random: &Random,
@@ -126,7 +126,7 @@ entry fun mint_and_place<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
-    payment: Coin<C>,
+    payment: &mut Coin<C>,
     whitelists: vector<Whitelist<T>>,
     kiosk: &mut Kiosk,
     kiosk_owner_cap: &KioskOwnerCap,
@@ -154,7 +154,7 @@ entry fun mint_and_place_in_new_kiosk<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
-    payment: Coin<C>,
+    payment: &mut Coin<C>,
     whitelists: vector<Whitelist<T>>,
     random: &Random,
     clock: &Clock,
@@ -191,7 +191,7 @@ fun internal_mint<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
-    payment: Coin<C>,
+    payment: &mut Coin<C>,
     mut whitelists: vector<Whitelist<T>>,
     random: &Random,
     clock: &Clock,
@@ -242,24 +242,17 @@ fun internal_mint<T: key + store, C>(
 
     // Get the unit price for the payment type.
     let unit_price = *phase.payment_types().get(&type_name::get<C>());
+
     // Assert the payment amount is greater than or equal to the unit price multiplied by the quantity.
     assert!(payment.value() >= unit_price * mint_quantity, EIncorrectPaymentAmount);
 
-    // Turn the payment Coin<C> into a Balance<C>.
-    let mut payment_balance = payment.into_balance();
+    // Get a mutable reference to the payment balance, and split the purchase amount from the payment balance.
+    let revenue = payment.balance_mut().split(unit_price * mint_quantity);
+
     // Deposit revenue into the Launch.
-    launch.deposit_revenue(payment_balance.split(unit_price * mint_quantity));
+    launch.deposit_revenue(revenue);
     // If payment balance is non-zero (happens when quantity is reduced from the requested quantity),
     // transfer the unused payment balance back to the participant.
-    if (payment_balance.value() > 0) {
-        transfer::public_transfer(
-            coin::from_balance(payment_balance, ctx),
-            ctx.sender(),
-        );
-    } else {
-        // Otherwise, destroy the empty payment balance.
-        payment_balance.destroy_zero();
-    };
 
     let mut rg = random.new_generator(ctx);
 
