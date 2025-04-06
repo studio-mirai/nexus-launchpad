@@ -169,6 +169,8 @@ fun phase__new__default(
     let (phase, schedule_promise) = phase::new<TestNft>(
         &runner.launch_operator_cap,
         kind,
+        option::some(b"Phase Name".to_string()),
+        option::some(b"Phase Description".to_string()),
         PHASE_MAX_ALLO,
         PHASE_MAX_COUNT,
         PHASE_ALLOW_BULK,
@@ -222,8 +224,7 @@ fun mint__mint(
     runner: &mut TestRunner,
     phase: &mut Phase<TestNft>,
     quantity: u64,
-    pay_coin: Coin<SUI>,
-    wls: vector<Whitelist<TestNft>>,
+    pay_coin: &mut Coin<SUI>,
 ) {
     let random = &runner.random;
     let clock = &runner.clock;
@@ -232,9 +233,27 @@ fun mint__mint(
         phase,
         quantity,
         pay_coin,
-        wls,
         random,
         clock,
+        runner.scen.ctx(),
+    );
+}
+
+fun mint__wl_mint(
+    runner: &mut TestRunner,
+    phase: &mut Phase<TestNft>,
+    quantity: u64,
+    pay_coin: &mut Coin<SUI>,
+    whitelists: vector<Whitelist<TestNft>>,
+) {
+    mint::wl_mint(
+        &mut runner.launch,
+        phase,
+        quantity,
+        pay_coin,
+        whitelists,
+        &runner.random,
+        &runner.clock,
         runner.scen.ctx(),
     );
 }
@@ -244,12 +263,30 @@ fun mint__mint__with_new_sui(
     sender: address,
     quantity: u64,
     item_price: u64,
+) {
+    runner.scen.next_tx(sender);
+    let mut phase: Phase<TestNft> = runner.scen.take_shared();
+    let mut pay_coin = runner.mint_coin<SUI>(quantity * item_price);
+    runner.mint__mint(&mut phase, quantity, &mut pay_coin);
+    transfer::public_transfer(pay_coin, sender);
+
+    scen::return_shared(phase);
+    runner.scen.next_tx(sender);
+}
+
+fun mint__wl_mint__with_new_sui(
+    runner: &mut TestRunner,
+    sender: address,
+    quantity: u64,
+    item_price: u64,
     wls: vector<Whitelist<TestNft>>,
 ) {
     runner.scen.next_tx(sender);
     let mut phase: Phase<TestNft> = runner.scen.take_shared();
-    let pay_coin = runner.mint_coin<SUI>(quantity * item_price);
-    runner.mint__mint(&mut phase, quantity, pay_coin, wls);
+    let mut pay_coin = runner.mint_coin<SUI>(quantity * item_price);
+    runner.mint__wl_mint(&mut phase, quantity, &mut pay_coin, wls);
+    transfer::public_transfer(pay_coin, sender);
+
     scen::return_shared(phase);
     runner.scen.next_tx(sender);
 }
@@ -258,8 +295,7 @@ fun mint__mint_and_place(
     runner: &mut TestRunner,
     phase: &mut Phase<TestNft>,
     quantity: u64,
-    pay_coin: Coin<SUI>,
-    wls: vector<Whitelist<TestNft>>,
+    pay_coin: &mut Coin<SUI>,
 ) {
     let random = &runner.random;
     let clock = &runner.clock;
@@ -268,7 +304,6 @@ fun mint__mint_and_place(
         phase,
         quantity,
         pay_coin,
-        wls,
         random,
         clock,
         runner.scen.ctx()
@@ -280,12 +315,13 @@ fun mint__mint_and_place__with_new_sui(
     sender: address,
     quantity: u64,
     item_price: u64,
-    wls: vector<Whitelist<TestNft>>,
 ) {
     runner.scen.next_tx(sender);
     let mut phase: Phase<TestNft> = runner.scen.take_shared();
-    let pay_coin = runner.mint_coin<SUI>(quantity * item_price);
-    runner.mint__mint_and_place(&mut phase, quantity, pay_coin, wls);
+    let mut pay_coin = runner.mint_coin<SUI>(quantity * item_price);
+    runner.mint__mint_and_place(&mut phase, quantity, &mut pay_coin);
+    transfer::public_transfer(pay_coin, sender);
+
     scen::return_shared(phase);
     runner.scen.next_tx(sender);
 }
@@ -304,7 +340,7 @@ fun test_mint_ok_kiosk_none()
 
     runner.clock.increment_for_testing(ONE_HOUR);
 
-    runner.mint__mint__with_new_sui(USER_1, ITEM_AMOUNT, ITEM_PRICE, vector[]);
+    runner.mint__mint__with_new_sui(USER_1, ITEM_AMOUNT, ITEM_PRICE);
 
     runner.assert_owns_nfts(USER_1, ITEM_AMOUNT);
 
@@ -322,7 +358,7 @@ fun test_mint_ok_kiosk_none_wl()
     runner.clock.increment_for_testing(ONE_HOUR);
 
     let wls = runner.whitelist__new(USER_1, ITEM_AMOUNT);
-    runner.mint__mint__with_new_sui(USER_1, ITEM_AMOUNT, ITEM_PRICE, wls);
+    runner.mint__wl_mint__with_new_sui(USER_1, ITEM_AMOUNT, ITEM_PRICE, wls);
 
     runner.assert_owns_nfts(USER_1, ITEM_AMOUNT);
 
@@ -339,7 +375,7 @@ fun test_mint_ok_kiosk_place()
 
     runner.clock.increment_for_testing(ONE_HOUR);
 
-    runner.mint__mint_and_place__with_new_sui(USER_1, ITEM_AMOUNT, ITEM_PRICE, vector[]);
+    runner.mint__mint_and_place__with_new_sui(USER_1, ITEM_AMOUNT, ITEM_PRICE);
 
     let kiosk = runner.scen.take_shared<Kiosk>();
     assert_eq(ITEM_AMOUNT, kiosk.item_count() as u64);
@@ -365,7 +401,7 @@ fun test_mint_ok_above_max_mint_allocation()
     runner.clock.increment_for_testing(ONE_HOUR);
 
     // try to mint more than max individual allocation
-    runner.mint__mint__with_new_sui(USER_1, PHASE_MAX_ALLO + 1, ITEM_PRICE, vector[]);
+    runner.mint__mint__with_new_sui(USER_1, PHASE_MAX_ALLO + 1, ITEM_PRICE);
 
     // user should only receive the max individual allocation
     runner.assert_owns_nfts(USER_1, PHASE_MAX_ALLO);
@@ -391,7 +427,6 @@ fun test_mint_ok_payment_refund()
         USER_1,
         PHASE_MAX_ALLO + excess_quantity,
         ITEM_PRICE,
-        vector[],
     );
 
     runner.assert_owns_sui(USER_1, ITEM_PRICE * excess_quantity);
@@ -411,7 +446,7 @@ fun test_mint_e_phase_not_started()
 
     // runner.clock.increment_for_testing(ONE_HOUR);
 
-    runner.mint__mint__with_new_sui(USER_1, ITEM_AMOUNT, ITEM_PRICE, vector[]);
+    runner.mint__mint__with_new_sui(USER_1, ITEM_AMOUNT, ITEM_PRICE);
 
     destroy(runner);
 }
@@ -426,7 +461,7 @@ fun test_mint_e_phase_ended()
 
     runner.clock.increment_for_testing(PHASE_END_TS);
 
-    runner.mint__mint__with_new_sui(USER_1, ITEM_AMOUNT, ITEM_PRICE, vector[]);
+    runner.mint__mint__with_new_sui(USER_1, ITEM_AMOUNT, ITEM_PRICE);
 
     destroy(runner);
 }
@@ -447,13 +482,12 @@ fun test_mint_e_phase_max_mint_count_exceeded()
             sender,
             PHASE_MAX_ALLO,
             ITEM_PRICE,
-            vector[],
         );
         runner.assert_owns_nfts(sender, PHASE_MAX_ALLO);
     });
 
     // try (and fail) to mint 1 more item
-    runner.mint__mint__with_new_sui(USER_3, 1, ITEM_PRICE, vector[]);
+    runner.mint__mint__with_new_sui(USER_3, 1, ITEM_PRICE);
 
     destroy(runner);
 }
@@ -472,7 +506,6 @@ fun test_mint_e_incorrect_payment_amount()
         USER_1,
         1,
         ITEM_PRICE - 1, // try to pay less than the item price
-        vector[],
     );
 
     destroy(runner);
@@ -490,7 +523,7 @@ fun test_mint_e_incorrect_whitelist_count()
 
     // try to mint with fewer whitelist tickets than requested quantity
     let wls = runner.whitelist__new(USER_1, ITEM_AMOUNT - 1);
-    runner.mint__mint__with_new_sui(USER_1, ITEM_AMOUNT, ITEM_PRICE, wls);
+    runner.mint__wl_mint__with_new_sui(USER_1, ITEM_AMOUNT, ITEM_PRICE, wls);
 
     destroy(runner);
 }
@@ -556,8 +589,9 @@ fun test_mint_e_incorrect_whitelist_for_phase()
 
     // try to use whitelist from phase1 in phase2
     let mut phase2 = runner.scen.take_shared_by_id<Phase<TestNft>>(phase2_id);
-    let pay_coin = runner.mint_coin<SUI>(ITEM_PRICE);
-    runner.mint__mint(&mut phase2, 1, pay_coin, vector[wl1]);
+    let mut pay_coin = runner.mint_coin<SUI>(ITEM_PRICE);
+    runner.mint__wl_mint(&mut phase2, 1, &mut pay_coin, vector[wl1]);
+    transfer::public_transfer(pay_coin, USER_1);
 
     destroy(phase2);
     destroy(runner);
@@ -577,6 +611,8 @@ fun test_schedule_e_phase_max_count_exceeds_launch_supply()
     let (mut phase, schedule_promise) = phase::new<TestNft>(
         &runner.launch_operator_cap,
         phase::new_phase_kind_public(),
+        option::some(b"Phase Name".to_string()),
+        option::some(b"Phase Description".to_string()),
         PHASE_MAX_ALLO,
         // try to create a phase with more items than the total launch supply
         LAUNCH_SUPPLY + 1,

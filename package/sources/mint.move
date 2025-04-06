@@ -7,7 +7,7 @@ use nexus_launchpad::whitelist::Whitelist;
 use std::type_name::{Self, TypeName};
 use std::u64;
 use sui::clock::Clock;
-use sui::coin::{Self, Coin};
+use sui::coin::{Coin};
 use sui::event::emit;
 use sui::kiosk::{Self, Kiosk, KioskOwnerCap};
 use sui::random::Random;
@@ -18,8 +18,7 @@ const EIncorrectPaymentAmount: u64 = 301;
 const EIncorrectWhitelistCount: u64 = 302;
 const EIncorrectWhitelistForPhase: u64 = 303;
 const EInvalidActivePhase: u64 = 304;
-const ENoWhitelistRequired: u64 = 305;
-const EPhaseMaxMintCountExceeded: u64 = 306;
+const EPhaseMaxMintCountExceeded: u64 = 305;
 
 public struct ItemMintedEvent has copy, drop {
     launch_id: ID,
