@@ -64,6 +64,8 @@ entry fun wl_mint<T: key + store, C>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    phase.assert_is_whitelist();
+
     launch.assert_kiosk_requirement_none();
 
     let items = internal_mint(
@@ -86,7 +88,6 @@ entry fun mint_and_lock<T: key + store, C>(
     phase: &mut Phase<T>,
     quantity: u64,
     payment: &mut Coin<C>,
-    //whitelists: vector<Whitelist<T>>,
     kiosk: &mut Kiosk,
     kiosk_owner_cap: &KioskOwnerCap,
     policy: &TransferPolicy<T>,
@@ -109,12 +110,43 @@ entry fun mint_and_lock<T: key + store, C>(
     items.destroy!(|item| kiosk.lock(kiosk_owner_cap, policy, item));
 }
 
+entry fun wl_mint_and_lock<T: key + store, C>(
+    launch: &mut Launch<T>,
+    phase: &mut Phase<T>,
+    quantity: u64,
+    payment: &mut Coin<C>,
+    whitelists: vector<Whitelist<T>>,
+    kiosk: &mut Kiosk,
+    kiosk_owner_cap: &KioskOwnerCap,
+    policy: &TransferPolicy<T>,
+    random: &Random,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    phase.assert_is_whitelist();
+
+    launch.assert_kiosk_requirement_lock();
+
+    let items = internal_mint(
+        launch,
+        phase,
+        quantity,
+        payment,
+        random,
+        clock,
+        ctx,
+    );
+
+    process_whitelists(whitelists, phase, items.length(), ctx);
+
+    items.destroy!(|item| kiosk.lock(kiosk_owner_cap, policy, item));
+}
+
 entry fun mint_and_lock_in_new_kiosk<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
     payment: &mut Coin<C>,
-    //whitelists: vector<Whitelist<T>>,
     policy: &TransferPolicy<T>,
     random: &Random,
     clock: &Clock,
@@ -133,6 +165,47 @@ entry fun mint_and_lock_in_new_kiosk<T: key + store, C>(
         clock,
         ctx,
     );
+
+    items.destroy!(
+        |item| kiosk.lock(
+            &kiosk_owner_cap,
+            policy,
+            item,
+        ),
+    );
+
+    transfer::public_share_object(kiosk);
+    transfer::public_transfer(kiosk_owner_cap, ctx.sender());
+}
+
+entry fun wl_mint_and_lock_in_new_kiosk<T: key + store, C>(
+    launch: &mut Launch<T>,
+    phase: &mut Phase<T>,
+    quantity: u64,
+    payment: &mut Coin<C>,
+    whitelists: vector<Whitelist<T>>,
+    policy: &TransferPolicy<T>,
+    random: &Random,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    phase.assert_is_whitelist();
+
+    launch.assert_kiosk_requirement_lock();
+
+    let (mut kiosk, kiosk_owner_cap) = kiosk::new(ctx);
+
+    let items = internal_mint(
+        launch,
+        phase,
+        quantity,
+        payment,
+        random,
+        clock,
+        ctx,
+    );
+
+    process_whitelists(whitelists, phase, items.length(), ctx);
 
     items.destroy!(
         |item| kiosk.lock(
@@ -173,12 +246,42 @@ entry fun mint_and_place<T: key + store, C>(
     items.destroy!(|item| kiosk.place(kiosk_owner_cap, item));
 }
 
+entry fun wl_mint_and_place<T: key + store, C>(
+    launch: &mut Launch<T>,
+    phase: &mut Phase<T>,
+    quantity: u64,
+    payment: &mut Coin<C>,
+    whitelists: vector<Whitelist<T>>,
+    kiosk: &mut Kiosk,
+    kiosk_owner_cap: &KioskOwnerCap,
+    random: &Random,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    phase.assert_is_whitelist();
+
+    launch.assert_kiosk_requirement_place();
+
+    let items = internal_mint(
+        launch,
+        phase,
+        quantity,
+        payment,
+        random,
+        clock,
+        ctx,
+    );
+
+    process_whitelists(whitelists, phase, items.length(), ctx);
+
+    items.destroy!(|item| kiosk.place(kiosk_owner_cap, item));
+}
+
 entry fun mint_and_place_in_new_kiosk<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
     payment: &mut Coin<C>,
-    //whitelists: vector<Whitelist<T>>,
     random: &Random,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -196,6 +299,45 @@ entry fun mint_and_place_in_new_kiosk<T: key + store, C>(
         clock,
         ctx,
     );
+
+    items.destroy!(
+        |item| kiosk.place(
+            &kiosk_owner_cap,
+            item,
+        ),
+    );
+
+    transfer::public_share_object(kiosk);
+    transfer::public_transfer(kiosk_owner_cap, ctx.sender());
+}
+
+entry fun wl_mint_and_place_in_new_kiosk<T: key + store, C>(
+    launch: &mut Launch<T>,
+    phase: &mut Phase<T>,
+    quantity: u64,
+    payment: &mut Coin<C>,
+    whitelists: vector<Whitelist<T>>,
+    random: &Random,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    phase.assert_is_whitelist();
+
+    launch.assert_kiosk_requirement_place();
+
+    let (mut kiosk, kiosk_owner_cap) = kiosk::new(ctx);
+
+    let items = internal_mint(
+        launch,
+        phase,
+        quantity,
+        payment,
+        random,
+        clock,
+        ctx,
+    );
+
+    process_whitelists(whitelists, phase, items.length(), ctx);
 
     items.destroy!(
         |item| kiosk.place(

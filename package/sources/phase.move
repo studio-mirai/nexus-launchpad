@@ -478,13 +478,6 @@ public fun is_allow_bulk_mint<T: key + store>(self: &Phase<T>): bool {
     self.is_allow_bulk_mint
 }
 
-public fun is_whitelist<T: key + store>(self: &Phase<T>): bool {
-    match (self.kind) {
-        PhaseKind::WHITELIST { .. } => true,
-        _ => false,
-    }
-}
-
 public fun max_mint_count_addr<T: key + store>(self: &Phase<T>): u64 {
     self.max_mint_count_addr
 }
@@ -495,6 +488,13 @@ public fun max_mint_count_phase<T: key + store>(self: &Phase<T>): u64 {
 
 public fun payment_types<T: key + store>(self: &Phase<T>): &VecMap<TypeName, u64> {
     &self.payment_types
+}
+
+public(package) fun assert_is_whitelist<T: key + store>(self: &Phase<T>) {
+    match (self.kind) {
+        PhaseKind::WHITELIST { .. } => {},
+        _ => abort ENotWhitelistPhase,
+    }
 }
 
 fun assert_valid_ts_range(start_ts: u64, end_ts: u64, clock: &Clock) {
