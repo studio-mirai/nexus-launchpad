@@ -33,7 +33,10 @@ fun init(otw: WHITELIST, ctx: &mut TxContext) {
     display.add(b"item_type".to_string(), b"{item_type}".to_string());
     display.add(b"launch_id".to_string(), b"{launch_id}".to_string());
     display.add(b"phase_id".to_string(), b"{phase_id}".to_string());
-    display.add(b"image".to_string(), b"https://wl.anima.nexus/{phase_id}".to_string());
+    display.add(
+        b"image".to_string(),
+        b"https://admin.anima.nexus/api/wl_image/{phase_id}".to_string(),
+    );
 
     transfer::public_transfer(display, ctx.sender());
     transfer::public_transfer(publisher, ctx.sender());
