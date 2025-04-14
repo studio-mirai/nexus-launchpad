@@ -1,4 +1,3 @@
-// TODO: Add whitelist processing to Kiosk mint functions.
 module nexus_launchpad::mint;
 
 use nexus_launchpad::launch::Launch;
@@ -7,7 +6,7 @@ use nexus_launchpad::whitelist::Whitelist;
 use std::type_name::{Self, TypeName};
 use std::u64;
 use sui::clock::Clock;
-use sui::coin::{Self, Coin};
+use sui::coin::Coin;
 use sui::event::emit;
 use sui::kiosk::{Self, Kiosk, KioskOwnerCap};
 use sui::random::Random;
@@ -18,7 +17,6 @@ const EIncorrectPaymentAmount: u64 = 301;
 const EIncorrectWhitelistCount: u64 = 302;
 const EIncorrectWhitelistForPhase: u64 = 303;
 const EInvalidActivePhase: u64 = 304;
-const ENoWhitelistRequired: u64 = 305;
 const EPhaseMaxMintCountExceeded: u64 = 306;
 
 public struct ItemMintedEvent has copy, drop {
@@ -59,7 +57,7 @@ entry fun wl_mint<T: key + store, C>(
     phase: &mut Phase<T>,
     quantity: u64,
     payment: &mut Coin<C>,
-    whitelists: vector<Whitelist<T>>,
+    whitelists: vector<Whitelist>,
     random: &Random,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -115,7 +113,7 @@ entry fun wl_mint_and_lock<T: key + store, C>(
     phase: &mut Phase<T>,
     quantity: u64,
     payment: &mut Coin<C>,
-    whitelists: vector<Whitelist<T>>,
+    whitelists: vector<Whitelist>,
     kiosk: &mut Kiosk,
     kiosk_owner_cap: &KioskOwnerCap,
     policy: &TransferPolicy<T>,
@@ -183,7 +181,7 @@ entry fun wl_mint_and_lock_in_new_kiosk<T: key + store, C>(
     phase: &mut Phase<T>,
     quantity: u64,
     payment: &mut Coin<C>,
-    whitelists: vector<Whitelist<T>>,
+    whitelists: vector<Whitelist>,
     policy: &TransferPolicy<T>,
     random: &Random,
     clock: &Clock,
@@ -250,7 +248,7 @@ entry fun wl_mint_and_place<T: key + store, C>(
     phase: &mut Phase<T>,
     quantity: u64,
     payment: &mut Coin<C>,
-    whitelists: vector<Whitelist<T>>,
+    whitelists: vector<Whitelist>,
     kiosk: &mut Kiosk,
     kiosk_owner_cap: &KioskOwnerCap,
     random: &Random,
@@ -315,7 +313,7 @@ entry fun wl_mint_and_place_in_new_kiosk<T: key + store, C>(
     phase: &mut Phase<T>,
     quantity: u64,
     payment: &mut Coin<C>,
-    whitelists: vector<Whitelist<T>>,
+    whitelists: vector<Whitelist>,
     random: &Random,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -432,7 +430,7 @@ fun internal_mint<T: key + store, C>(
 
 #[allow(lint(self_transfer))]
 fun process_whitelists<T: key + store>(
-    mut whitelists: vector<Whitelist<T>>,
+    mut whitelists: vector<Whitelist>,
     phase: &Phase<T>,
     quantity: u64,
     ctx: &TxContext,
