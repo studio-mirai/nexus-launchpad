@@ -206,7 +206,7 @@ fun whitelist__new(
     runner: &mut TestRunner,
     sender: address,
     count: u64,
-): vector<Whitelist<TestNft>>
+): vector<Whitelist>
 {
     runner.scen.next_tx(sender);
     let mut phase: Phase<TestNft> = runner.scen.take_shared();
@@ -244,7 +244,7 @@ fun mint__wl_mint(
     phase: &mut Phase<TestNft>,
     quantity: u64,
     pay_coin: &mut Coin<SUI>,
-    whitelists: vector<Whitelist<TestNft>>,
+    whitelists: vector<Whitelist>,
 ) {
     mint::wl_mint(
         &mut runner.launch,
@@ -279,7 +279,7 @@ fun mint__wl_mint__with_new_sui(
     sender: address,
     quantity: u64,
     item_price: u64,
-    wls: vector<Whitelist<TestNft>>,
+    wls: vector<Whitelist>,
 ) {
     runner.scen.next_tx(sender);
     let mut phase: Phase<TestNft> = runner.scen.take_shared();
