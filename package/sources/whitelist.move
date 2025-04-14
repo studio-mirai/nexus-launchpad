@@ -79,22 +79,22 @@ public fun issue_bulk<T: key + store>(
     recipients.destroy_empty();
 }
 
-public fun destroy<T: key + store>(self: Whitelist) {
+public fun destroy(self: Whitelist) {
     let Whitelist { id, .. } = self;
     id.delete();
 }
 
 //=== View Functions ===
 
-public fun id<T: key + store>(self: &Whitelist): ID {
+public fun id(self: &Whitelist): ID {
     self.id.to_inner()
 }
 
-public fun launch_id<T: key + store>(self: &Whitelist): ID {
+public fun launch_id(self: &Whitelist): ID {
     self.launch_id
 }
 
-public fun phase_id<T: key + store>(self: &Whitelist): ID {
+public fun phase_id(self: &Whitelist): ID {
     self.phase_id
 }
 
