@@ -415,7 +415,7 @@ public(package) fun set_minting_state<T: key + store>(self: &mut Phase<T>, clock
     match (self.state) {
         PhaseState::ACTIVE { start_ts, end_ts } => {
             assert!(start_ts >= clock.timestamp_ms(), EPhaseNotStarted);
-            assert!(clock.timestamp_ms() <= end_ts, EPhaseEnded);
+            assert!(clock.timestamp_ms() < end_ts, EPhaseEnded);
             self.state =
                 PhaseState::ACTIVE {
                     start_ts: start_ts,
@@ -533,7 +533,7 @@ public fun assert_is_mintable<T: key + store>(self: &Phase<T>, clock: &Clock) {
     match (self.state) {
         PhaseState::ACTIVE { start_ts, end_ts } => {
             assert!(
-                clock.timestamp_ms() >= start_ts && clock.timestamp_ms() <= end_ts,
+                clock.timestamp_ms() >= start_ts && clock.timestamp_ms() < end_ts,
                 EPhaseNotMintable,
             );
         },
