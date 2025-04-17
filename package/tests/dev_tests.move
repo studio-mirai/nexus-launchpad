@@ -12,7 +12,7 @@ use sui::{
     test_utils::{destroy},
 };
 use nexus_launchpad::{
-    test_nft::{Self, TestNft},
+    dev_nft::{Self, DevNft},
     dev_setup::{dev_setup},
     launch::{Self, Launch},
     phase::{Phase},
@@ -48,9 +48,9 @@ fun begin(
     let mut clock = clock::create_for_testing(scen.ctx());
     clock.set_for_testing(ONE_HOUR);
 
-    // test_nft
+    // dev_nft
     scen.next_tx(sender);
-    test_nft::init_for_testing(scen.ctx());
+    dev_nft::init_for_testing(scen.ctx());
     scen.next_tx(sender);
     let publisher = scen.take_from_sender<Publisher>();
 
@@ -89,8 +89,8 @@ fun test_kiosk_none()
     runner.scen.next_tx(ADMIN);
     runner.clock.increment_for_testing(ONE_HOUR);
 
-    let mut launch: Launch<TestNft> = runner.scen.take_shared();
-    let mut phase: Phase<TestNft> = runner.scen.take_shared();
+    let mut launch: Launch<DevNft> = runner.scen.take_shared();
+    let mut phase: Phase<DevNft> = runner.scen.take_shared();
     let mut pay_coin = runner.send_sui(3_000_000_000);
 
     mint::mint(
@@ -130,8 +130,8 @@ fun test_kiosk_place()
     runner.scen.next_tx(ADMIN);
     runner.clock.increment_for_testing(ONE_HOUR);
 
-    let mut launch: Launch<TestNft> = runner.scen.take_shared();
-    let mut phase: Phase<TestNft> = runner.scen.take_shared();
+    let mut launch: Launch<DevNft> = runner.scen.take_shared();
+    let mut phase: Phase<DevNft> = runner.scen.take_shared();
     let mut pay_coin = runner.send_sui(3_000_000_000);
 
     let (mut kiosk, kiosk_cap) = kiosk::new(runner.scen.ctx());
@@ -177,8 +177,8 @@ fun test_kiosk_none_wl()
     runner.scen.next_tx(ADMIN);
     runner.clock.increment_for_testing(ONE_HOUR);
 
-    let mut launch: Launch<TestNft> = runner.scen.take_shared();
-    let mut phase: Phase<TestNft> = runner.scen.take_shared();
+    let mut launch: Launch<DevNft> = runner.scen.take_shared();
+    let mut phase: Phase<DevNft> = runner.scen.take_shared();
     let mut pay_coin = runner.send_sui(3_000_000_000);
 
     let wl1 = runner.scen.take_from_sender<Whitelist>();

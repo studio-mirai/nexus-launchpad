@@ -7,7 +7,7 @@ use sui::{
     package::{Publisher},
 };
 use nexus_launchpad::{
-    test_nft::{Self, TestNft},
+    dev_nft::{Self, DevNft},
     launch::{Self},
     phase::{Self},
     whitelist::{Self},
@@ -33,7 +33,7 @@ public fun dev_setup(
         mut launch,
         launch_admin_cap,
         share_promise,
-    ) = launch::new<TestNft>(
+    ) = launch::new<DevNft>(
         publisher,
         launch_total_supply,
         kiosk_req,
@@ -46,7 +46,7 @@ public fun dev_setup(
     // add items
     let items = vector::tabulate!(
         launch_total_supply,
-        |i| test_nft::new_test_nft(
+        |i| dev_nft::new_dev_nft(
             b"Demo NFT",
             i + 1,
             b"https://images.stockcake.com/public/a/8/e/a8e29d30-9da7-418b-932b-c12c3260c2ef_medium/abstract-geometric-design-stockcake.jpg",
@@ -63,7 +63,7 @@ public fun dev_setup(
     } else {
         phase::new_phase_kind_public()
     };
-    let (mut phase, schedule_promise) = phase::new<TestNft>(
+    let (mut phase, schedule_promise) = phase::new<DevNft>(
         &launch_operator_cap,
         phase_kind,
         option::some(b"Phase Name".to_string()),
@@ -75,11 +75,11 @@ public fun dev_setup(
     );
 
     // add payment option
-    phase.add_payment_type<TestNft, SUI>(&launch_operator_cap, item_price_sui);
+    phase.add_payment_type<DevNft, SUI>(&launch_operator_cap, item_price_sui);
 
     // send whitelist objects to sender
     wl_amount.do!(|_| {
-        let wl = whitelist::new<TestNft>(&launch_operator_cap, &mut launch, &mut phase, ctx);
+        let wl = whitelist::new<DevNft>(&launch_operator_cap, &mut launch, &mut phase, ctx);
         transfer::public_transfer(wl, ctx.sender());
     });
 

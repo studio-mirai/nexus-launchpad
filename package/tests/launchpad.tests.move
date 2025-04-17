@@ -15,7 +15,7 @@ use sui::{
 };
 
 use nexus_launchpad::{
-    test_nft::{Self, TestNft},
+    dev_nft::{Self, DevNft},
     launch::{Self, Launch, LaunchAdminCap, LaunchOperatorCap, KioskRequirement},
     phase::{Self, Phase, PhaseKind, RegisterPhasePromise},
     mint::{Self},
@@ -47,7 +47,7 @@ public struct TestRunner {
     clock: Clock,
     random: Random,
     publisher: Publisher,
-    launch: Launch<TestNft>,
+    launch: Launch<DevNft>,
     launch_admin_cap: LaunchAdminCap,
     launch_operator_cap: LaunchOperatorCap,
 }
@@ -68,9 +68,9 @@ fun begin(
     let mut clock = clock::create_for_testing(scen.ctx());
     clock.set_for_testing(ONE_HOUR);
 
-    // test_nft
+    // dev_nft
     scen.next_tx(ADMIN);
-    test_nft::init_for_testing(scen.ctx());
+    dev_nft::init_for_testing(scen.ctx());
     scen.next_tx(ADMIN);
     let publisher = scen.take_from_sender<Publisher>();
 
@@ -79,7 +79,7 @@ fun begin(
         mut launch,
         launch_admin_cap,
         share_promise,
-    ) = launch::new<TestNft>(
+    ) = launch::new<DevNft>(
         &publisher,
         launch_total_supply,
         kiosk_req,
@@ -151,7 +151,7 @@ fun launch__add_items(
 ) {
     let items = vector::tabulate!(
         count,
-        |i| test_nft::new_test_nft(
+        |i| dev_nft::new_dev_nft(
             b"Demo NFT",
             i + 1,
             b"https://images.stockcake.com/public/a/8/e/a8e29d30-9da7-418b-932b-c12c3260c2ef_medium/abstract-geometric-design-stockcake.jpg",
@@ -170,8 +170,8 @@ fun launch__set_active_state(
 fun phase__new__default(
     runner: &mut TestRunner,
     kind: PhaseKind,
-): (Phase<TestNft>, RegisterPhasePromise) {
-    let (phase, schedule_promise) = phase::new<TestNft>(
+): (Phase<DevNft>, RegisterPhasePromise) {
+    let (phase, schedule_promise) = phase::new<DevNft>(
         &runner.launch_operator_cap,
         kind,
         option::some(b"Phase Name".to_string()),
@@ -186,10 +186,10 @@ fun phase__new__default(
 
 fun phase__add_payment_type<C>(
     runner: &TestRunner,
-    phase: &mut Phase<TestNft>,
+    phase: &mut Phase<DevNft>,
     price: u64,
 ) {
-    phase.add_payment_type<TestNft, C>(&runner.launch_operator_cap, price);
+    phase.add_payment_type<DevNft, C>(&runner.launch_operator_cap, price);
 }
 
 fun whitelist__new(
@@ -199,10 +199,10 @@ fun whitelist__new(
 ): vector<Whitelist>
 {
     runner.scen.next_tx(sender);
-    let mut phase: Phase<TestNft> = runner.scen.take_shared();
+    let mut phase: Phase<DevNft> = runner.scen.take_shared();
     let wls = vector::tabulate!(
         count,
-        |_| whitelist::new<TestNft>(
+        |_| whitelist::new<DevNft>(
             &runner.launch_operator_cap, &mut runner.launch, &mut phase, runner.scen.ctx(),
         )
     );
@@ -212,7 +212,7 @@ fun whitelist__new(
 
 fun mint__mint(
     runner: &mut TestRunner,
-    phase: &mut Phase<TestNft>,
+    phase: &mut Phase<DevNft>,
     quantity: u64,
     pay_coin: &mut Coin<SUI>,
 ) {
@@ -231,7 +231,7 @@ fun mint__mint(
 
 fun mint__wl_mint(
     runner: &mut TestRunner,
-    phase: &mut Phase<TestNft>,
+    phase: &mut Phase<DevNft>,
     quantity: u64,
     pay_coin: &mut Coin<SUI>,
     whitelists: vector<Whitelist>,
@@ -255,7 +255,7 @@ fun mint__mint__with_new_sui(
     item_price: u64,
 ) {
     runner.scen.next_tx(sender);
-    let mut phase: Phase<TestNft> = runner.scen.take_shared();
+    let mut phase: Phase<DevNft> = runner.scen.take_shared();
     let mut pay_coin = runner.mint_coin<SUI>(quantity * item_price);
     runner.mint__mint(&mut phase, quantity, &mut pay_coin);
     transfer::public_transfer(pay_coin, sender);
@@ -272,7 +272,7 @@ fun mint__wl_mint__with_new_sui(
     wls: vector<Whitelist>,
 ) {
     runner.scen.next_tx(sender);
-    let mut phase: Phase<TestNft> = runner.scen.take_shared();
+    let mut phase: Phase<DevNft> = runner.scen.take_shared();
     let mut pay_coin = runner.mint_coin<SUI>(quantity * item_price);
     runner.mint__wl_mint(&mut phase, quantity, &mut pay_coin, wls);
     transfer::public_transfer(pay_coin, sender);
@@ -283,7 +283,7 @@ fun mint__wl_mint__with_new_sui(
 
 fun mint__mint_and_place(
     runner: &mut TestRunner,
-    phase: &mut Phase<TestNft>,
+    phase: &mut Phase<DevNft>,
     quantity: u64,
     pay_coin: &mut Coin<SUI>,
 ) {
@@ -307,7 +307,7 @@ fun mint__mint_and_place__with_new_sui(
     item_price: u64,
 ) {
     runner.scen.next_tx(sender);
-    let mut phase: Phase<TestNft> = runner.scen.take_shared();
+    let mut phase: Phase<DevNft> = runner.scen.take_shared();
     let mut pay_coin = runner.mint_coin<SUI>(quantity * item_price);
     runner.mint__mint_and_place(&mut phase, quantity, &mut pay_coin);
     transfer::public_transfer(pay_coin, sender);
@@ -568,8 +568,8 @@ fun test_mint_e_incorrect_whitelist_for_phase()
     runner.scen.next_tx(USER_1);
 
     // create a whitelist for phase1
-    let mut phase1 = runner.scen.take_shared_by_id<Phase<TestNft>>(phase1_id);
-    let wl1 = whitelist::new<TestNft>(
+    let mut phase1 = runner.scen.take_shared_by_id<Phase<DevNft>>(phase1_id);
+    let wl1 = whitelist::new<DevNft>(
         &runner.launch_operator_cap,
         &mut runner.launch,
         &mut phase1,
@@ -578,7 +578,7 @@ fun test_mint_e_incorrect_whitelist_for_phase()
     scen::return_shared(phase1);
 
     // try to use whitelist from phase1 in phase2
-    let mut phase2 = runner.scen.take_shared_by_id<Phase<TestNft>>(phase2_id);
+    let mut phase2 = runner.scen.take_shared_by_id<Phase<DevNft>>(phase2_id);
     let mut pay_coin = runner.mint_coin<SUI>(ITEM_PRICE);
     runner.mint__wl_mint(&mut phase2, 1, &mut pay_coin, vector[wl1]);
     transfer::public_transfer(pay_coin, USER_1);
@@ -600,7 +600,7 @@ fun test_schedule_e_phase_max_count_exceeds_launch_supply()
 
     // PhaseState::CREATED
 
-    let (mut phase, schedule_promise) = phase::new<TestNft>(
+    let (mut phase, schedule_promise) = phase::new<DevNft>(
         &runner.launch_operator_cap,
         phase::new_phase_kind_public(),
         option::some(b"Phase Name".to_string()),
@@ -645,7 +645,7 @@ fun assert_owns_nfts(
     expected_quantity: u64,
 ) {
     runner.scen.next_tx(sender);
-    let nft_ids = runner.scen.ids_for_sender<TestNft>();
+    let nft_ids = runner.scen.ids_for_sender<DevNft>();
     assert_eq(expected_quantity, nft_ids.length());
 }
 
