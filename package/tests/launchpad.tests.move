@@ -71,10 +71,10 @@ fun begin(
     // test_nft
     scen.next_tx(ADMIN);
     test_nft::init_for_testing(scen.ctx());
-
-    // launch
     scen.next_tx(ADMIN);
     let publisher = scen.take_from_sender<Publisher>();
+
+    // launch
     let (
         mut launch,
         launch_admin_cap,

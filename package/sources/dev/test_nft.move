@@ -1,11 +1,11 @@
 #[test_only]
 module nexus_launchpad::test_nft;
 
-use std::string::String;
-use sui::display;
-use sui::package;
-
 // === imports ===
+
+use std::string::{String};
+use sui::display::{Self};
+use sui::package::{Self};
 
 // === structs ===
 
@@ -36,7 +36,8 @@ public fun new_test_nft(
 
 // === initialization ===
 
-fun init(otw: TEST_NFT, ctx: &mut TxContext) {
+fun init(otw: TEST_NFT, ctx: &mut TxContext)
+{
     let publisher = package::claim(otw, ctx);
 
     let mut display = display::new<TestNft>(&publisher, ctx);
