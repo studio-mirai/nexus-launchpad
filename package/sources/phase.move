@@ -37,7 +37,7 @@ public struct Phase<phantom T: key + store> has key {
     payment_types: VecMap<TypeName, u64>,
 }
 
-public struct SchedulePhasePromise {
+public struct RegisterPhasePromise {
     phase_id: ID,
 }
 
@@ -48,9 +48,13 @@ public enum PhaseKind has copy, drop, store {
 
 public enum PhaseState has copy, drop, store {
     CREATED,
-    // If whitelist count is greater than 0, the phase is treated as a whitelist phase.
-    SCHEDULED { start_ts: u64, end_ts: u64 },
+    ACTIVE { start_ts: u64, end_ts: u64 },
+    ENDED,
 }
+
+//=== Constants ===
+
+const MAX_PAYMENT_TYPE_COUNT: u64 = 50;
 
 //=== Events ===
 
@@ -68,7 +72,7 @@ public struct PhaseDestroyedEvent has copy, drop, store {
     phase_id: ID,
 }
 
-public struct PhaseScheduledEvent has copy, drop, store {
+public struct PhaseRegisteredEvent has copy, drop, store {
     launch_id: ID,
     phase_id: ID,
     start_ts: u64,
@@ -88,18 +92,23 @@ public struct PaymentOptionRemovedEvent has copy, drop, store {
 
 //=== Errors ===
 
-const EInvalidLaunch: u64 = 200;
-const EPhaseAlreadyStarted: u64 = 201;
 const EInvalidPhaseState: u64 = 202;
-const EPhaseIsActive: u64 = 203;
 const ENoPaymentOptions: u64 = 204;
 const ENotWhitelistPhase: u64 = 205;
-const EAlreadyPublicPhase: u64 = 206;
-const EInvalidSchedulePhasePromise: u64 = 207;
-const EInvalidReschedule: u64 = 208;
-const EInvalidMaxMintCount: u64 = 209;
-const EInvalidMaxMintAllocation: u64 = 210;
+const EInvalidRegisterPhasePromise: u64 = 207;
+const EInvalidMaxPhaseMintCount: u64 = 209;
+const EInvalidMaxAddressMint: u64 = 210;
 const EPhaseMaxCountExceedsLaunchSupply: u64 = 211;
+const EExceedsLaunchSupply: u64 = 212;
+const EMaxPhaseMintCountTooLow: u64 = 213;
+const EPhaseNotStarted: u64 = 214;
+const EPhaseEnded: u64 = 215;
+const EExceedsMaxPaymentTypeCount: u64 = 216;
+const ETimestampNotInFuture: u64 = 219;
+const EStartTsAfterEndTs: u64 = 220;
+const EStartTsBeforeEndTs: u64 = 221;
+const EPhaseNotEnded: u64 = 222;
+const EPhaseNotMintable: u64 = 223;
 
 //=== Init Function ===
 
@@ -120,10 +129,10 @@ public fun new<T: key + store>(
     max_mint_count_phase: u64,
     is_allow_bulk_mint: bool,
     ctx: &mut TxContext,
-): (Phase<T>, SchedulePhasePromise) {
-    assert!(max_mint_count_phase > 0, EInvalidMaxMintCount);
-    assert!(max_mint_count_addr > 0, EInvalidMaxMintAllocation);
-    assert!(max_mint_count_addr < max_mint_count_phase, EInvalidMaxMintAllocation);
+): (Phase<T>, RegisterPhasePromise) {
+    assert!(max_mint_count_phase > 0, EInvalidMaxPhaseMintCount);
+    assert!(max_mint_count_addr > 0, EInvalidMaxAddressMint);
+    assert!(max_mint_count_addr <= max_mint_count_phase, EInvalidMaxAddressMint);
 
     let phase = Phase<T> {
         id: object::new(ctx),
@@ -140,7 +149,7 @@ public fun new<T: key + store>(
         payment_types: vec_map::empty(),
     };
 
-    let promise = SchedulePhasePromise {
+    let promise = RegisterPhasePromise {
         phase_id: phase.id(),
     };
 
@@ -164,255 +173,208 @@ public fun new_phase_kind_whitelist(): PhaseKind {
     PhaseKind::WHITELIST { count: 0 }
 }
 
-// Destroy a phase, and unregister it from the launch.
-// @ux: UX should warn users that this action will invalidate whitelist tickets issued for the phase.
-public fun destroy<T: key + store>(
-    self: Phase<T>,
-    cap: &LaunchOperatorCap,
-    launch: &mut Launch<T>,
-    clock: &Clock,
-) {
-    cap.authorize(self.launch_id());
-
-    match (self.state) {
-        PhaseState::SCHEDULED { .. } => {
-            // Assert the phase's registered launch ID is the same as the given launch's ID.
-            assert!(self.launch_id() == launch.id(), EInvalidLaunch);
-
-            emit(PhaseDestroyedEvent {
-                launch_id: launch.id(),
-                phase_id: self.id(),
-            });
-
-            // Assert the phase is not active.
-            self.assert_not_active(clock);
-
-            // Unschedule the phase from the launch.
-            launch.unschedule_phase(self.id());
-
-            let Phase {
-                id,
-                participants,
-                payment_types,
-                ..,
-            } = self;
-
-            id.delete();
-            participants.drop();
-            payment_types.into_keys_values();
-        },
-        _ => abort EInvalidPhaseState,
-    };
-}
-
-public fun schedule<T: key + store>(
+public fun register<T: key + store>(
     mut self: Phase<T>,
-    promise: SchedulePhasePromise,
+    promise: RegisterPhasePromise,
     cap: &LaunchOperatorCap,
     launch: &mut Launch<T>,
     start_ts: u64,
     end_ts: u64,
     clock: &Clock,
 ) {
-    // Asser the LaunchOperatorCap matches the provided Launch.
+    // Assert the LaunchOperatorCap matches the provided Launch.
     cap.authorize(launch.id());
-
-    // Assert the SchedulePhasePromise matches the provided Phase.
-    assert!(self.id() == promise.phase_id, EInvalidSchedulePhasePromise);
-
+    // Assert the RegisterPhasePromise matches the provided Phase.
+    assert!(self.id() == promise.phase_id, EInvalidRegisterPhasePromise);
     // Assert the start/end timestamps are valid.
     assert_valid_ts_range(start_ts, end_ts, clock);
+    // Assert the Phase's mint count doesn't exceed the Launch's available supply.
+    assert!(self.max_mint_count_phase <= launch.supply(), EPhaseMaxCountExceedsLaunchSupply);
+    // Assert the Phase has at least one payment option.
+    assert!(!self.payment_types.is_empty(), ENoPaymentOptions);
+    // Register the Phase with the Launch.
+    launch.register_phase(self.id());
+    // Change the Phase's state to ACTIVE.
+    self.state = PhaseState::ACTIVE { start_ts: start_ts, end_ts: end_ts };
+    // Destroy the RegisterPhasePromise hot potato.
+    let RegisterPhasePromise { .. } = promise;
+    // Turn the Phase into a shared object.
+    transfer::share_object(self);
+    // Emit PhaseRegisteredEvent.
+    emit(PhaseRegisteredEvent {
+        launch_id: launch.id(),
+        phase_id: self.id(),
+        start_ts: start_ts,
+        end_ts: end_ts,
+    });
+}
 
-    assert!(self.max_mint_count_phase <= launch.total_supply(), EPhaseMaxCountExceedsLaunchSupply);
+// Destroy a Phase.
+public fun destroy<T: key + store>(
+    self: Phase<T>,
+    launch: &mut Launch<T>,
+    cap: &LaunchOperatorCap,
+) {
+    // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
+    cap.authorize(self.launch_id());
 
     match (self.state) {
-        PhaseState::CREATED => {
-            // Assert the Phase has at least one payment option.
-            assert!(!self.payment_types.is_empty(), ENoPaymentOptions);
-
-            launch.schedule_phase(self.id(), start_ts, end_ts);
-
-            emit(PhaseScheduledEvent {
+        PhaseState::ENDED => {
+            // Unregister the Phase from the Launch.
+            launch.unregister_phase(self.id());
+            // Destroy the Phase.
+            let Phase { id, participants, .. } = self;
+            id.delete();
+            participants.drop();
+            // Emit PhaseDestroyedEvent.
+            emit(PhaseDestroyedEvent {
                 launch_id: self.launch_id(),
                 phase_id: self.id(),
-                start_ts: start_ts,
-                end_ts: end_ts,
             });
-
-            self.state =
-                PhaseState::SCHEDULED {
-                    start_ts: start_ts,
-                    end_ts: end_ts,
-                };
-
-            let SchedulePhasePromise { .. } = promise;
-
-            transfer::share_object(self);
         },
         _ => abort EInvalidPhaseState,
-    }
+    };
 }
 
-public fun reschedule<T: key + store>(
-    self: &mut Phase<T>,
-    cap: &LaunchOperatorCap,
-    launch: &mut Launch<T>,
-    new_start_ts: u64,
-    new_end_ts: u64,
-    clock: &Clock,
-) {
-    // Verify the LaunchOperatorCap matches the given Launch.
-    cap.authorize(launch.id());
-
-    // Assert the new start/end timestamps are valid.
-    assert_valid_ts_range(new_start_ts, new_end_ts, clock);
-
-    match (self.state) {
-        PhaseState::SCHEDULED { start_ts, end_ts } => {
-            // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
-            cap.authorize(self.launch_id());
-            // Assert the new start/end timestamps are different from the existing timestamps.
-            assert!(start_ts != new_start_ts || end_ts != new_end_ts, EInvalidReschedule);
-            // Reschedule the phase from the launch.
-            launch.schedule_phase(self.id(), new_start_ts, new_end_ts);
-            // Update the Phase's state.
-            self.state =
-                PhaseState::SCHEDULED {
-                    start_ts: new_start_ts,
-                    end_ts: new_end_ts,
-                };
-        },
-        _ => abort EInvalidPhaseState,
-    }
-}
-
+// Add a payment type to the Phase.
 public fun add_payment_type<T: key + store, C>(
     self: &mut Phase<T>,
     cap: &LaunchOperatorCap,
     value: u64,
-    clock: &Clock,
 ) {
-    match (self.state) {
-        PhaseState::CREATED => {
-            cap.authorize(self.launch_id());
-        },
-        PhaseState::SCHEDULED { .. } => {
-            // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
-            cap.authorize(self.launch_id());
-            // Assert the Phase has not started.
-            self.assert_not_started(clock);
-        },
-    };
-
+    // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
+    cap.authorize(self.launch_id());
+    // Assert the Phase has less than the maximum number of payment options.
+    assert!(self.payment_types.size() < MAX_PAYMENT_TYPE_COUNT, EExceedsMaxPaymentTypeCount);
+    // Add the payment option to the Phase.
+    self.payment_types.insert(type_name::get<C>(), value);
+    // Emit PaymentOptionAddedEvent.
     emit(PaymentOptionAddedEvent {
         phase_id: self.id(),
         payment_type: type_name::get<C>(),
         payment_value: value,
     });
-
-    // Add the payment option to the Phase.
-    self.payment_types.insert(type_name::get<C>(), value);
 }
 
-// Remove a payment option from the `Phase`.
-// This can only be done before the `Phase` has started.
-public fun remove_payment_type<T: key + store, C>(
-    self: &mut Phase<T>,
-    cap: &LaunchOperatorCap,
-    clock: &Clock,
-) {
-    match (self.state) {
-        PhaseState::CREATED => {
-            cap.authorize(self.launch_id());
-        },
-        PhaseState::SCHEDULED { .. } => {
-            // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
-            cap.authorize(self.launch_id());
-            // Assert the Phase has not started.
-            self.assert_not_started(clock);
-        },
-    };
-
+// Remove a payment option from the Phase.
+public fun remove_payment_type<T: key + store, C>(self: &mut Phase<T>, cap: &LaunchOperatorCap) {
+    // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
+    cap.authorize(self.launch_id());
+    // Assert the Phase has more than one payment option,
+    // so that if one payment option is removed, there will still be at least one payment option.
+    assert!(self.payment_types.size() > 1, ENoPaymentOptions);
+    // Remove the payment option from the Phase.
+    self.payment_types.remove(&type_name::get<C>());
+    // Emit PaymentOptionRemovedEvent.
     emit(PaymentOptionRemovedEvent {
         phase_id: self.id(),
         payment_type: type_name::get<C>(),
     });
-
-    // Remove the payment option from the Phase.
-    self.payment_types.remove(&type_name::get<C>());
 }
 
+// Set the name of the Phase.
+public fun set_name<T: key + store>(self: &mut Phase<T>, cap: &LaunchOperatorCap, name: String) {
+    cap.authorize(self.launch_id());
+    self.name.swap_or_fill(name);
+}
+
+// Set the description of the Phase.
+public fun set_description<T: key + store>(
+    self: &mut Phase<T>,
+    cap: &LaunchOperatorCap,
+    description: String,
+) {
+    cap.authorize(self.launch_id());
+    self.description.swap_or_fill(description);
+}
+
+// Set the `is_allow_bulk_mint` value for the Phase.
+// If true, minters will be able to mint multiple items in a single transaction.
 public fun set_is_allow_bulk_mint<T: key + store>(
     self: &mut Phase<T>,
     cap: &LaunchOperatorCap,
     is_allow_bulk_mint: bool,
-    clock: &Clock,
 ) {
-    match (self.state) {
-        PhaseState::SCHEDULED { .. } => {
-            // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
-            cap.authorize(self.launch_id());
-            // Assert the Phase has not started.
-            self.assert_not_started(clock);
-            // Update the Phase's `is_allow_bulk_mint` value.
-            self.is_allow_bulk_mint = is_allow_bulk_mint;
-        },
-        _ => abort EInvalidPhaseState,
-    }
+    // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
+    cap.authorize(self.launch_id());
+    // Update the Phase's `is_allow_bulk_mint` value.
+    self.is_allow_bulk_mint = is_allow_bulk_mint;
 }
 
+// Set the maximum number of mints that can be made by a single address in the Phase.
 public fun set_max_mint_count_addr<T: key + store>(
     self: &mut Phase<T>,
     cap: &LaunchOperatorCap,
     max_mint_count_addr: u64,
-    clock: &Clock,
 ) {
-    match (self.state) {
-        PhaseState::SCHEDULED { .. } => {
-            // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
-            cap.authorize(self.launch_id());
-            // Assert the phase has not started.
-            self.assert_not_started(clock);
-            // Update the Phase's `max_mint_count_addr` value.
-            self.max_mint_count_addr = max_mint_count_addr;
-        },
-        _ => abort EInvalidPhaseState,
-    }
+    // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
+    cap.authorize(self.launch_id());
+    // Assert the value is greater than the current max mint count for an address.
+    assert!(max_mint_count_addr > self.max_mint_count_addr, EInvalidMaxAddressMint);
+    assert!(max_mint_count_addr <= self.max_mint_count_phase, EInvalidMaxAddressMint);
+    self.max_mint_count_addr = max_mint_count_addr;
 }
 
+// Set the maximum number of mints that can be made in the Phase.
 public fun set_max_mint_count_phase<T: key + store>(
     self: &mut Phase<T>,
     cap: &LaunchOperatorCap,
     max_mint_count_phase: u64,
+    launch: &mut Launch<T>,
+) {
+    // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
+    cap.authorize(self.launch_id());
+    // Verify the LaunchOperatorCap matches the provided Launch.
+    cap.authorize(launch.id());
+    // Assert the value doesn't exceed the launch's total supply.
+    assert!(max_mint_count_phase <= launch.items().length(), EExceedsLaunchSupply);
+    // Assert that the value is greater than the current max phase mint count.
+    assert!(max_mint_count_phase > self.max_mint_count_phase, EMaxPhaseMintCountTooLow);
+    // Assert the value is greater than the current max mint count for an address.
+    assert!(max_mint_count_phase > self.max_mint_count_addr, EMaxPhaseMintCountTooLow);
+    // Update the Phase's `max_mint_count_phase` value.
+    self.max_mint_count_phase = max_mint_count_phase;
+}
+
+// Set the start timestamp for the Phase.
+// Requires the Phase to be in ACTIVE state.
+public fun set_start_ts<T: key + store>(
+    self: &mut Phase<T>,
+    cap: &LaunchOperatorCap,
+    start_ts: u64,
     clock: &Clock,
 ) {
+    cap.authorize(self.launch_id());
+    // Assert the start timestamp is in the future.
+    assert!(start_ts > clock.timestamp_ms(), ETimestampNotInFuture);
+
     match (self.state) {
-        PhaseState::SCHEDULED { .. } => {
-            // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
-            cap.authorize(self.launch_id());
-            // Assert the Phase has not started.
-            self.assert_not_started(clock);
-            // Update the Phase's `max_mint_count_phase` value.
-            self.max_mint_count_phase = max_mint_count_phase;
+        PhaseState::ACTIVE { end_ts, .. } => {
+            assert!(start_ts < end_ts, EStartTsAfterEndTs);
+            self.state = PhaseState::ACTIVE { start_ts: start_ts, end_ts: end_ts };
         },
         _ => abort EInvalidPhaseState,
     }
 }
 
-public fun set_phase_kind<T: key + store>(self: &mut Phase<T>, kind: PhaseKind) {
-    match (self.kind) {
-        PhaseKind::WHITELIST { .. } => {
-            match (kind) {
-                PhaseKind::PUBLIC => { self.kind = kind; },
-                _ => abort EAlreadyPublicPhase,
-            }
+// Set the end timestamp for the Phase.
+// Requires the Phase to be in ACTIVE state.
+public fun set_end_ts<T: key + store>(
+    self: &mut Phase<T>,
+    cap: &LaunchOperatorCap,
+    end_ts: u64,
+    clock: &Clock,
+) {
+    cap.authorize(self.launch_id());
+    // Assert the end timestamp is in the future.
+    assert!(end_ts > clock.timestamp_ms(), ETimestampNotInFuture);
+
+    match (self.state) {
+        PhaseState::ACTIVE { start_ts, .. } => {
+            assert!(end_ts > start_ts, EStartTsBeforeEndTs);
+            self.state = PhaseState::ACTIVE { start_ts: start_ts, end_ts: end_ts };
         },
-        PhaseKind::PUBLIC => {
-            match (kind) {
-                PhaseKind::WHITELIST { .. } => { self.kind = kind; },
-                _ => abort EAlreadyPublicPhase,
-            }
-        },
+        _ => abort EInvalidPhaseState,
     }
 }
 
@@ -424,24 +386,19 @@ public(package) fun participant_mint_count<T: key + store>(
     if (!self.participants.contains(addr)) {
         self.participants.add(addr, 0);
     };
-
     *self.participants.borrow(addr)
 }
 
-public(package) fun increment_current_mint_count<T: key + store>(self: &mut Phase<T>) {
-    self.current_mint_count = self.current_mint_count + 1;
-}
-
-public(package) fun increment_participant_mint_count<T: key + store>(
-    self: &mut Phase<T>,
-    addr: address,
-) {
-    if (!self.participants.contains(addr)) {
-        self.participants.add(addr, 0);
+public(package) fun increment_mint_count<T: key + store>(self: &mut Phase<T>, ctx: &TxContext) {
+    // Create a new participant entry if the minter's address is not in the participants table.
+    if (!self.participants.contains(ctx.sender())) {
+        self.participants.add(ctx.sender(), 0);
     };
-
-    let count = self.participants.borrow_mut(addr);
+    // Increment the mint count for the minter's address.
+    let count = self.participants.borrow_mut(ctx.sender());
     *count = *count + 1;
+    // Increment the current mint count for the phase.
+    self.current_mint_count = self.current_mint_count + 1;
 }
 
 public(package) fun increment_whitelist_count<T: key + store>(self: &mut Phase<T>) {
@@ -452,6 +409,79 @@ public(package) fun increment_whitelist_count<T: key + store>(self: &mut Phase<T
         _ => abort ENotWhitelistPhase,
     }
 }
+
+// Transition a Phase from ACTIVE state to ACTIVE state.
+public(package) fun set_minting_state<T: key + store>(self: &mut Phase<T>, clock: &Clock) {
+    match (self.state) {
+        PhaseState::ACTIVE { start_ts, end_ts } => {
+            assert!(start_ts >= clock.timestamp_ms(), EPhaseNotStarted);
+            assert!(clock.timestamp_ms() <= end_ts, EPhaseEnded);
+            self.state =
+                PhaseState::ACTIVE {
+                    start_ts: start_ts,
+                    end_ts: end_ts,
+                };
+        },
+        _ => abort EInvalidPhaseState,
+    }
+}
+
+// Returns the remaining number of mints that can be made in the Phase.
+public(package) fun remaining_mint_count<T: key + store>(self: &Phase<T>): u64 {
+    self.max_mint_count_phase - self.current_mint_count
+}
+
+// Transition a Phase from ACTIVE state to ENDED state.
+public(package) fun set_ended_state<T: key + store>(self: &mut Phase<T>, clock: &Clock) {
+    match (self.state) {
+        PhaseState::ACTIVE { end_ts, .. } => {
+            assert!(clock.timestamp_ms() > end_ts, EPhaseNotEnded);
+            self.state = PhaseState::ENDED;
+        },
+        _ => abort EInvalidPhaseState,
+    }
+}
+
+// Returns true if the Phase has PUBLIC kind.
+public fun is_public_kind<T: key + store>(self: &Phase<T>): bool {
+    match (self.kind) {
+        PhaseKind::PUBLIC => true,
+        _ => false,
+    }
+}
+
+// Returns true if the Phase has WHITELIST kind.
+public fun is_whitelist_kind<T: key + store>(self: &Phase<T>): bool {
+    match (self.kind) {
+        PhaseKind::WHITELIST { .. } => true,
+        _ => false,
+    }
+}
+
+// Returns true if the Phase is in CREATED state.
+public fun is_created_state<T: key + store>(self: &Phase<T>): bool {
+    match (self.state) {
+        PhaseState::CREATED => true,
+        _ => false,
+    }
+}
+
+// Returns true if the Phase is in ACTIVE state.
+public fun is_active_state<T: key + store>(self: &Phase<T>): bool {
+    match (self.state) {
+        PhaseState::ACTIVE { .. } => true,
+        _ => false,
+    }
+}
+
+// Returns true if the Phase is in ENDED state.
+public fun is_ended_state<T: key + store>(self: &Phase<T>): bool {
+    match (self.state) {
+        PhaseState::ENDED => true,
+        _ => false,
+    }
+}
+
 //=== View Functions ===
 
 public fun id<T: key + store>(self: &Phase<T>): ID {
@@ -490,13 +520,6 @@ public fun payment_types<T: key + store>(self: &Phase<T>): &VecMap<TypeName, u64
     &self.payment_types
 }
 
-public(package) fun assert_is_whitelist<T: key + store>(self: &Phase<T>) {
-    match (self.kind) {
-        PhaseKind::WHITELIST { .. } => {},
-        _ => abort ENotWhitelistPhase,
-    }
-}
-
 fun assert_valid_ts_range(start_ts: u64, end_ts: u64, clock: &Clock) {
     // Assert the start timestamp is in the future.
     assert!(start_ts > clock.timestamp_ms(), 1);
@@ -504,23 +527,20 @@ fun assert_valid_ts_range(start_ts: u64, end_ts: u64, clock: &Clock) {
     assert!(end_ts > start_ts, 2);
 }
 
-fun assert_not_active<T: key + store>(self: &Phase<T>, clock: &Clock) {
+//=== Assertions ===
+
+public fun assert_is_mintable<T: key + store>(self: &Phase<T>, clock: &Clock) {
     match (self.state) {
-        PhaseState::SCHEDULED { start_ts, end_ts, .. } => {
+        PhaseState::ACTIVE { start_ts, end_ts } => {
             assert!(
-                clock.timestamp_ms() < start_ts || clock.timestamp_ms() > end_ts,
-                EPhaseIsActive,
+                clock.timestamp_ms() >= start_ts && clock.timestamp_ms() <= end_ts,
+                EPhaseNotMintable,
             );
         },
-        _ => abort EInvalidPhaseState,
+        _ => abort EPhaseNotMintable,
     }
 }
 
-fun assert_not_started<T: key + store>(self: &Phase<T>, clock: &Clock) {
-    match (self.state) {
-        PhaseState::SCHEDULED { start_ts, .. } => {
-            assert!(clock.timestamp_ms() < start_ts, EPhaseAlreadyStarted);
-        },
-        _ => abort EInvalidPhaseState,
-    }
+public fun assert_is_whitelist<T: key + store>(self: &Phase<T>) {
+    assert!(self.is_whitelist_kind(), ENotWhitelistPhase);
 }

@@ -12,11 +12,9 @@ use sui::kiosk::{Self, Kiosk, KioskOwnerCap};
 use sui::random::Random;
 use sui::transfer_policy::TransferPolicy;
 
-const EBulkMintNotAllowed: u64 = 300;
 const EIncorrectPaymentAmount: u64 = 301;
 const EIncorrectWhitelistCount: u64 = 302;
 const EIncorrectWhitelistForPhase: u64 = 303;
-const EInvalidActivePhase: u64 = 304;
 const EPhaseMaxMintCountExceeded: u64 = 306;
 
 public struct ItemMintedEvent has copy, drop {
@@ -76,7 +74,7 @@ entry fun wl_mint<T: key + store, C>(
         ctx,
     );
 
-    process_whitelists(whitelists, phase, items.length(), ctx);
+    internal_process_whitelists(whitelists, phase, items.length(), ctx);
 
     items.destroy!(|item| transfer::public_transfer(item, ctx.sender()));
 }
@@ -135,7 +133,7 @@ entry fun wl_mint_and_lock<T: key + store, C>(
         ctx,
     );
 
-    process_whitelists(whitelists, phase, items.length(), ctx);
+    internal_process_whitelists(whitelists, phase, items.length(), ctx);
 
     items.destroy!(|item| kiosk.lock(kiosk_owner_cap, policy, item));
 }
@@ -203,7 +201,7 @@ entry fun wl_mint_and_lock_in_new_kiosk<T: key + store, C>(
         ctx,
     );
 
-    process_whitelists(whitelists, phase, items.length(), ctx);
+    internal_process_whitelists(whitelists, phase, items.length(), ctx);
 
     items.destroy!(
         |item| kiosk.lock(
@@ -269,7 +267,7 @@ entry fun wl_mint_and_place<T: key + store, C>(
         ctx,
     );
 
-    process_whitelists(whitelists, phase, items.length(), ctx);
+    internal_process_whitelists(whitelists, phase, items.length(), ctx);
 
     items.destroy!(|item| kiosk.place(kiosk_owner_cap, item));
 }
@@ -334,7 +332,7 @@ entry fun wl_mint_and_place_in_new_kiosk<T: key + store, C>(
         ctx,
     );
 
-    process_whitelists(whitelists, phase, items.length(), ctx);
+    internal_process_whitelists(whitelists, phase, items.length(), ctx);
 
     items.destroy!(
         |item| kiosk.place(
@@ -351,59 +349,48 @@ entry fun wl_mint_and_place_in_new_kiosk<T: key + store, C>(
 fun internal_mint<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
-    quantity: u64,
+    mut quantity: u64,
     payment: &mut Coin<C>,
     random: &Random,
     clock: &Clock,
     ctx: &mut TxContext,
 ): vector<T> {
-    // Fetch the active phase ID from the launch.
-    //
-    // This will error out if:
-    //    1. The provided phase object's ID is not the active phase ID.
-    //    2. The current timestamp is not within the active phase's time range.
-    assert!(launch.active_phase_id(clock) == phase.id(), EInvalidActivePhase);
-
-    // Assert requested quantity is 1 if bulk mint is not allowed.
-    if (phase.is_allow_bulk_mint() == false) {
-        assert!(quantity == 1, EBulkMintNotAllowed);
+    // Assert the Launch is mintable.
+    // This performs a check that ensures the Launch is both in ACTIVE state and has items remaining.
+    launch.assert_is_mintable();
+    // Assert the Phase is mintable.
+    // This performs a check that ensures the current timestamp is within the Phase's start and end timestamps.
+    phase.assert_is_mintable(clock);
+    // Set the quantity to 1 if the Phase does not allow bulk minting and the requested quantity is greater than 1.
+    if (!phase.is_allow_bulk_mint() && quantity > 1) {
+        quantity = 1;
     };
-
     // Calculate the participant's remaining mint count by substracting the participant's
     // current mint count from the phase's max mint allocation per participant.
     let participant_remaining_mint_count =
         phase.max_mint_count_addr() - phase.participant_mint_count(ctx.sender());
-
     // Update the quantity to the participant's remaining mint count
     // if the requested quantity is greater than the participant's remaining mint count.
-    let mint_quantity = u64::min(quantity, participant_remaining_mint_count);
-
+    let quantity = u64::min(quantity, participant_remaining_mint_count);
     // Assert the max mint count for the phase is not exceeded.
-    assert!(
-        phase.current_mint_count() + mint_quantity <= phase.max_mint_count_phase(),
-        EPhaseMaxMintCountExceeded,
-    );
-
+    assert!(phase.remaining_mint_count() >= quantity, EPhaseMaxMintCountExceeded);
     // Get the unit price for the payment type.
     let unit_price = *phase.payment_types().get(&type_name::get<C>());
-
     // Assert the payment amount is greater than or equal to the unit price multiplied by the quantity.
-    assert!(payment.value() >= unit_price * mint_quantity, EIncorrectPaymentAmount);
-
+    assert!(payment.value() >= unit_price * quantity, EIncorrectPaymentAmount);
     // Get a mutable reference to the payment balance, and split the purchase amount from the payment balance.
-    let revenue = payment.balance_mut().split(unit_price * mint_quantity);
-
+    let revenue = payment.balance_mut().split(unit_price * quantity);
     // Deposit revenue into the Launch.
     launch.deposit_revenue(revenue);
 
-    let mut rg = random.new_generator(ctx);
-
     let mut items: vector<T> = vector[];
+    let mut rg = random.new_generator(ctx);
     let mut i = 0;
-    while (i < mint_quantity) {
+    while (i < quantity) {
+        // Randomly select an item from the Launch.
         let item_idx = rg.generate_u64_in_range(0, launch.items().length() - 1);
         let item = launch.items_mut().swap_remove(item_idx);
-
+        // Emit ItemMintedEvent.
         emit(ItemMintedEvent {
             launch_id: launch.id(),
             phase_id: phase.id(),
@@ -412,16 +399,13 @@ fun internal_mint<T: key + store, C>(
             payment_type: type_name::get<C>(),
             payment_value: unit_price,
         });
-
+        // Add the item to the items vector.
         items.push_back(item);
-
         // Increment the minted supply for the Launch.
         launch.increment_minted_supply();
         // Increment the current mint count for the Phase.
-        phase.increment_current_mint_count();
-        // Increment the participant's mint count for the Phase.
-        phase.increment_participant_mint_count(ctx.sender());
-
+        phase.increment_mint_count(ctx);
+        // Increment the loop counter.
         i = i + 1;
     };
 
@@ -429,7 +413,7 @@ fun internal_mint<T: key + store, C>(
 }
 
 #[allow(lint(self_transfer))]
-fun process_whitelists<T: key + store>(
+fun internal_process_whitelists<T: key + store>(
     mut whitelists: vector<Whitelist>,
     phase: &Phase<T>,
     quantity: u64,

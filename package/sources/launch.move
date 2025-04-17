@@ -1,18 +1,18 @@
 module nexus_launchpad::launch;
 
-use nexus_launchpad::quicksort::quicksort;
-use nexus_launchpad::utils::{ts_to_range, range_to_ts};
 use std::type_name::{Self, TypeName};
+use std::u64;
 use sui::bag::{Self, Bag};
 use sui::balance::Balance;
 use sui::clock::Clock;
 use sui::coin::{Self, Coin};
 use sui::dynamic_field as df;
 use sui::event::emit;
+use sui::kiosk::{Kiosk, KioskOwnerCap};
 use sui::package::{Self, Publisher};
 use sui::table_vec::{Self, TableVec};
-use sui::transfer::Receiving;
-use sui::vec_map::{Self, VecMap};
+use sui::transfer_policy::TransferPolicy;
+use sui::vec_set::{Self, VecSet};
 
 //=== Method Aliases ===
 
@@ -31,15 +31,12 @@ public struct Launch<phantom T: key + store> has key {
     state: LaunchState,
     // Items that are available for mint.
     items: TableVec<T>,
-    // Phase IDs mapped to a u128 derived from the u64 start and end timestamps.
-    // This is used to sort the phases, and to ensure there are no overlaps.
-    phase_ids: VecMap<ID, u128>,
+    // Set of Phase IDs associated with the Launch.
+    phase_ids: VecSet<ID>,
     // Revenue collected from the launch. Implemented as a Bag to allow for multiple payment types.
     revenue: Bag,
     // An enum indicating whether a launch requires Kiosk (place or lock) or not.
     kiosk_requirement: KioskRequirement,
-    // The total supply of the launch.
-    total_supply: u64,
 }
 
 // Capability object for admin-level permissiones.
@@ -47,6 +44,7 @@ public struct Launch<phantom T: key + store> has key {
 public struct LaunchAdminCap has key, store {
     id: UID,
     launch_id: ID,
+    is_withdrew_revenue: bool,
 }
 
 // Capability object for operator-level permissions.
@@ -64,17 +62,20 @@ public struct ShareLaunchPromise {
 // Used as a df key for linking other objects to the launch for easy discoverability.
 public struct LaunchLink<phantom T: key> has copy, drop, store {}
 
+//=== Enums ===
+
+// An enum indicating whether a launch requires Kiosk (place or lock) or not.
 public enum KioskRequirement has copy, drop, store {
     NONE,
     PLACE,
     LOCK,
 }
 
+// An enum indicating the state of a launch.
 public enum LaunchState has copy, drop, store {
-    SUPPLYING,
-    SCHEDULING,
-    ACTIVE { phase_id: ID, start_ts: u64, end_ts: u64, minted_supply: u64 },
-    PAUSED { phase_id: ID, start_ts: u64, end_ts: u64, minted_supply: u64 },
+    SUPPLYING { total_supply: u64 },
+    ACTIVE { minted_supply: u64 },
+    PAUSED { minted_supply: u64 },
     COMPLETED,
 }
 
@@ -108,51 +109,35 @@ public struct SchedulingStateSetEvent has copy, drop {
     launch_id: ID,
 }
 
-public struct ReadyStateSetEvent has copy, drop {
-    launch_id: ID,
-    phase_id: ID,
-    start_ts: u64,
-    end_ts: u64,
-}
-
-public struct LaunchPhaseAdvancedEvent has copy, drop {
-    from_phase_id: ID,
-    from_phase_idx: u64,
-    to_phase_id: ID,
-    to_phase_idx: u64,
-    start_ts: u64,
-    end_ts: u64,
-}
-
 public struct CompletedStateSetEvent has copy, drop {
     launch_id: ID,
     ts: u64,
 }
 
-public struct PausedStateSetEvent has copy, drop {
-    launch_id: ID,
-    phase_id: ID,
-}
+//=== Constants ===
+
+const MAX_PHASE_COUNT: u64 = 50;
 
 //=== Errors ===
 
-const EExceedsCurrentSupply: u64 = 100;
+const EExceedsTargetSupply: u64 = 100;
 const EInvalidLaunchAdminCap: u64 = 101;
 const EInvalidLaunchId: u64 = 102;
 const EInvalidLaunchOperatorCap: u64 = 103;
 const EInvalidState: u64 = 104;
-const ELaunchAlreadyStarted: u64 = 105;
-const ENotLastPhase: u64 = 106;
-const EPhaseTimeOverlap: u64 = 107;
 const ENotKioskRequirementNone: u64 = 108;
 const ENotKioskRequirementPlace: u64 = 109;
 const ENotKioskRequirementLock: u64 = 110;
 const EInvalidPublisher: u64 = 111;
 const EPhaseNotStarted: u64 = 112;
 const EPhaseEnded: u64 = 113;
-const EPhaseNotEnded: u64 = 114;
-const EInvalidSupply: u64 = 115;
-const ENoNextPhase: u64 = 116;
+const ETotalSupplyNotReached: u64 = 115;
+const EItemsNotEmpty: u64 = 117;
+const EPhasesNotDestroyed: u64 = 118;
+const EAdminCapNotWithdrewRevenue: u64 = 119;
+const ENotMintable: u64 = 121;
+const ENoRemainingSupply: u64 = 122;
+const EExceedsMaxPhaseCount: u64 = 123;
 
 //=== Init Function ===
 
@@ -174,17 +159,17 @@ public fun new<T: key + store>(
 
     let mut launch = Launch<T> {
         id: object::new(ctx),
-        state: LaunchState::SUPPLYING,
+        state: LaunchState::SUPPLYING { total_supply: total_supply },
         items: table_vec::empty(ctx),
-        phase_ids: vec_map::empty(),
+        phase_ids: vec_set::empty(),
         revenue: bag::new(ctx),
         kiosk_requirement: kiosk_requirement,
-        total_supply: total_supply,
     };
 
     let launch_admin_cap = LaunchAdminCap {
         id: object::new(ctx),
         launch_id: launch.id(),
+        is_withdrew_revenue: false,
     };
 
     let launch_operator_cap = LaunchOperatorCap {
@@ -235,61 +220,56 @@ public fun share<T: key + store>(self: Launch<T>, promise: ShareLaunchPromise) {
     transfer::share_object(self);
 }
 
+// Add an Item of type `T` to a Launch.
 public fun add_item<T: key + store>(self: &mut Launch<T>, cap: &LaunchOperatorCap, item: T) {
+    // Verify the LaunchOperatorCap matches the Launch.
     cap.authorize(self.id());
 
     match (self.state) {
-        LaunchState::SUPPLYING => {
-            assert!(self.items.length() < self.total_supply, EExceedsCurrentSupply);
-
+        // An item can only be added to a Launch in SUPPLYING state.
+        LaunchState::SUPPLYING { total_supply } => {
+            // Assert that adding an item will not exceed the total supply.
+            assert!(self.items.length() + 1 <= total_supply, EExceedsTargetSupply);
+            // Emit ItemAddedEvent.
             emit(ItemAddedEvent {
                 launch_id: self.id(),
                 item_type: type_name::get<T>(),
             });
-
+            // Add the item to the Launch.
             self.items.push_back(item);
         },
         _ => abort EInvalidState,
     };
 }
 
-// Add items to a Launch.
+// Add items of type `T` to a Launch.
 public fun add_items<T: key + store>(
     self: &mut Launch<T>,
     cap: &LaunchOperatorCap,
     items: vector<T>,
 ) {
+    // Verify the LaunchOperatorCap matches the Launch.
     cap.authorize(self.id());
 
     match (self.state) {
-        LaunchState::SUPPLYING => {
-            assert!(
-                self.items.length() + items.length() <= self.total_supply,
-                EExceedsCurrentSupply,
-            );
-
+        // Items can only be added to a Launch in SUPPLYING state.
+        LaunchState::SUPPLYING { total_supply } => {
+            // Assert that adding the items will not exceed the total supply.
+            assert!(self.items.length() + items.length() <= total_supply, EExceedsTargetSupply);
+            // Emit ItemsAddedEvent.
             emit(ItemsAddedEvent {
                 launch_id: self.id(),
                 item_type: type_name::get<T>(),
                 quantity: items.length(),
             });
-
-            items.do!(|item| self.items.push_back(item));
+            // Add the items to the Launch.
+            items.destroy!(|item| self.items.push_back(item));
         },
         _ => abort EInvalidState,
     };
 }
 
-// Receive items that have been sent to the Launch directly, and add them.
-public fun receive_and_add_item<T: key + store>(
-    self: &mut Launch<T>,
-    item_to_receive: Receiving<T>,
-) {
-    let item = transfer::public_receive(&mut self.id, item_to_receive);
-    self.items.push_back(item);
-}
-
-// Remove items from a Launch in SUPPLYING or COMPLETED state.
+// Remove items from a Launch in SUPPLYING state.
 public fun remove_items<T: key + store>(
     self: &mut Launch<T>,
     cap: &LaunchOperatorCap,
@@ -298,19 +278,8 @@ public fun remove_items<T: key + store>(
     cap.authorize(self.id());
 
     match (self.state) {
-        LaunchState::SCHEDULING => abort EInvalidState,
-        LaunchState::ACTIVE { .. } => abort EInvalidState,
-        LaunchState::PAUSED { .. } => abort EInvalidState,
-        _ => {
-            assert!(quantity >= self.items.length(), EExceedsCurrentSupply);
-
-            let mut items: vector<T> = vector[];
-
-            let mut i = 0;
-            while (i < quantity) {
-                items.push_back(self.items.pop_back());
-                i = i + 1;
-            };
+        LaunchState::SUPPLYING { .. } => {
+            let withdraw_quantity = u64::min(quantity, self.items.length());
 
             emit(ItemsRemovedEvent {
                 launch_id: self.id(),
@@ -318,104 +287,50 @@ public fun remove_items<T: key + store>(
                 quantity: quantity,
             });
 
-            items
+            vector::tabulate!(withdraw_quantity, |_| self.items.pop_back())
         },
+        _ => abort EInvalidState,
     }
 }
 
-// Transitions a Launch from SUPPLYING or ACTIVE to SCHEDULING state.
-public fun set_scheduling_state<T: key + store>(
-    self: &mut Launch<T>,
-    cap: &LaunchOperatorCap,
-    clock: &Clock,
-) {
+// Transitions a Launch from SUPPLYING to ACTIVE state.
+public fun set_active_state<T: key + store>(self: &mut Launch<T>, cap: &LaunchOperatorCap) {
+    // Verify the LaunchOperatorCap matches the Launch.
     cap.authorize(self.id());
 
     match (self.state) {
-        LaunchState::SUPPLYING => {
-            assert!(self.items.length() == self.total_supply, EInvalidSupply);
-
+        LaunchState::SUPPLYING { total_supply } => {
+            // Assert that the Launch has reached its total supply.
+            assert!(self.items.length() == total_supply, ETotalSupplyNotReached);
+            // Emit SchedulingStateSetEvent.
             emit(SchedulingStateSetEvent {
                 launch_id: self.id(),
             });
-
-            self.state = LaunchState::SCHEDULING;
+            // Transition the Launch to ACTIVE state.
+            self.state = LaunchState::ACTIVE { minted_supply: 0 };
         },
-        // To transition from ACTIVE back to SCHEDULING,
-        // the current timestamp must be before the start timestamp of the first phase.
-        LaunchState::ACTIVE { .. } => {
-            self.assert_not_started(clock);
-            self.state = LaunchState::SCHEDULING;
+        LaunchState::PAUSED { minted_supply } => {
+            // Transition the Launch to ACTIVE state.
+            self.state = LaunchState::ACTIVE { minted_supply };
         },
         _ => abort EInvalidState,
     }
 }
 
-// Transitions a Launch from SCHEDULING or PAUSED to ACTIVE state.
-public fun set_active_state<T: key + store>(self: &mut Launch<T>, cap: &LaunchOperatorCap) {
-    cap.authorize(self.id());
-
-    match (self.state) {
-        LaunchState::SCHEDULING => {
-            // Sort phases by start timestamp.
-            self.sort_phases();
-
-            // Get ID and timestamp details for the first phase.
-            let (phase_id, ts_range) = self.phase_ids.get_entry_by_idx(0);
-            let (start_ts, end_ts) = range_to_ts(*ts_range);
-
-            emit(ReadyStateSetEvent {
-                launch_id: self.id(),
-                phase_id: *phase_id,
-                start_ts: start_ts,
-                end_ts: end_ts,
-            });
-
-            // Set the launch state to READY with the first phase's details.
-            self.state =
-                LaunchState::ACTIVE {
-                    phase_id: *phase_id,
-                    start_ts: start_ts,
-                    end_ts: end_ts,
-                    minted_supply: 0,
-                };
-        },
-        LaunchState::PAUSED { phase_id, start_ts, end_ts, minted_supply } => {
-            self.state =
-                LaunchState::ACTIVE {
-                    phase_id: phase_id,
-                    start_ts: start_ts,
-                    end_ts: end_ts,
-                    minted_supply: minted_supply,
-                };
-        },
-        _ => abort EInvalidState,
-    }
-}
-
+// Transition a Launch from ACTIVE to PAUSED state.
 public fun set_paused_state<T: key + store>(self: &mut Launch<T>, cap: &LaunchOperatorCap) {
     cap.authorize(self.id());
 
     match (self.state) {
-        LaunchState::ACTIVE { phase_id, start_ts, end_ts, minted_supply } => {
-            emit(PausedStateSetEvent {
-                launch_id: self.id(),
-                phase_id: phase_id,
-            });
-
-            self.state =
-                LaunchState::PAUSED {
-                    phase_id: phase_id,
-                    start_ts: start_ts,
-                    end_ts: end_ts,
-                    minted_supply: minted_supply,
-                };
+        LaunchState::ACTIVE { minted_supply } => {
+            self.state = LaunchState::PAUSED { minted_supply };
         },
-        _ => abort EInvalidState,
+        _ => {},
     }
 }
 
-// Transitions a Launch from REVEALING to COMPLETED state.
+// Transitions a Launch from ACTIVE to COMPLETED state.
+// Requires that the Launch has no items remaining.
 public fun set_completed_state<T: key + store>(
     self: &mut Launch<T>,
     cap: &LaunchOperatorCap,
@@ -424,16 +339,10 @@ public fun set_completed_state<T: key + store>(
     cap.authorize(self.id());
 
     match (self.state) {
-        LaunchState::ACTIVE { phase_id, .. } => {
-            // Get the index of the current phase.
-            let phase_idx = self.phase_ids.get_idx(&phase_id);
-            // Assert that the current phase is the last phase.
-            assert!(phase_idx == self.phase_ids.size() - 1, ENotLastPhase);
-            // Fetch details about the last phase.
-            let (_, _, end_ts) = get_last_phase_details(self);
-            // Assert that the last phase has ended.
-            assert!(clock.timestamp_ms() >= end_ts, EPhaseNotEnded);
-            // Set the Launch to COMPLETED state.
+        LaunchState::ACTIVE { .. } => {
+            // Assert that the Launch has no items remaining.
+            assert!(self.items.is_empty(), EItemsNotEmpty);
+            // Transition the Launch to COMPLETED state.
             self.state = LaunchState::COMPLETED;
             // Emit an event to indicate the Launch has been completed.
             emit(CompletedStateSetEvent {
@@ -445,11 +354,84 @@ public fun set_completed_state<T: key + store>(
     }
 }
 
+// Withdraw `quantity` items from a Launch.
+// This might need to be called multiple times to withdraw all items.
+public fun withdraw_items<T: key + store>(
+    self: &mut Launch<T>,
+    cap: &mut LaunchOperatorCap,
+    mut quantity: u64,
+): vector<T> {
+    // Verify the LaunchOperatorCap matches the Launch.
+    cap.authorize(self.id());
+    // Assert that the Launch has no Kiosk requirement.
+    self.assert_kiosk_requirement_none();
+
+    match (self.state) {
+        LaunchState::ACTIVE { .. } => {
+            assert!(!self.items.is_empty(), ENoRemainingSupply);
+            quantity = u64::min(quantity, self.items.length());
+            vector::tabulate!(quantity, |_| self.items.pop_back())
+        },
+        _ => abort EInvalidState,
+    }
+}
+
+// Withdraw `quantity` items from a Launch.
+// This might need to be called multiple times to withdraw all items.
+public fun withdraw_items_and_place_in_kiosk<T: key + store>(
+    self: &mut Launch<T>,
+    cap: &mut LaunchOperatorCap,
+    mut quantity: u64,
+    kiosk: &mut Kiosk,
+    kiosk_owner_cap: &KioskOwnerCap,
+) {
+    // Verify the LaunchOperatorCap matches the Launch.
+    cap.authorize(self.id());
+    // Assert that the Launch has a PLACE Kiosk requirement.
+    self.assert_kiosk_requirement_place();
+
+    match (self.state) {
+        LaunchState::ACTIVE { .. } => {
+            assert!(!self.items.is_empty(), ENoRemainingSupply);
+            quantity = u64::min(quantity, self.items.length());
+            let items = vector::tabulate!(quantity, |_| self.items.pop_back());
+            items.destroy!(|item| kiosk.place(kiosk_owner_cap, item));
+        },
+        _ => abort EInvalidState,
+    }
+}
+
+// Withdraw `quantity` items from a Launch.
+// This might need to be called multiple times to withdraw all items.
+public fun withdraw_items_and_lock_in_kiosk<T: key + store>(
+    self: &mut Launch<T>,
+    cap: &mut LaunchOperatorCap,
+    mut quantity: u64,
+    kiosk: &mut Kiosk,
+    kiosk_owner_cap: &KioskOwnerCap,
+    policy: &TransferPolicy<T>,
+) {
+    // Verify the LaunchOperatorCap matches the Launch.
+    cap.authorize(self.id());
+    // Assert that the Launch has a LOCK Kiosk requirement.
+    self.assert_kiosk_requirement_lock();
+
+    match (self.state) {
+        LaunchState::ACTIVE { .. } => {
+            assert!(!self.items.is_empty(), ENoRemainingSupply);
+            quantity = u64::min(quantity, self.items.length());
+            let items = vector::tabulate!(quantity, |_| self.items.pop_back());
+            items.destroy!(|item| kiosk.lock(kiosk_owner_cap, policy, item));
+        },
+        _ => abort EInvalidState,
+    }
+}
+
 // Withdraws revenue of the provided type from a Launch.
 // Only allowed when the Launch is in COMPLETED state.
 public fun withdraw_revenue<T: key + store, C>(
     self: &mut Launch<T>,
-    cap: &LaunchAdminCap,
+    cap: &mut LaunchAdminCap,
     ctx: &mut TxContext,
 ): Coin<C> {
     cap.authorize(self.id());
@@ -459,168 +441,114 @@ public fun withdraw_revenue<T: key + store, C>(
             let balance: Balance<C> = self.revenue.remove(type_name::get<C>());
             let coin = coin::from_balance(balance, ctx);
 
+            if (self.revenue.is_empty()) {
+                cap.is_withdrew_revenue = true;
+            };
+
             coin
         },
         _ => abort EInvalidState,
     }
 }
 
-// Advance to the next Phase if the current Phase has ended.
-public fun advance_phase<T: key + store>(
-    self: &mut Launch<T>,
-    cap: &LaunchOperatorCap,
-    clock: &Clock,
-) {
+// Destroy a Launch with the LaunchOperatorCap.
+// Requirements:
+// - The Launch must be in COMPLETED state.
+// - Phases must have been destroyed.
+public fun destroy<T: key + store>(self: Launch<T>, cap: LaunchOperatorCap) {
+    // Verify the LaunchOperatorCap matches the Launch.
     cap.authorize(self.id());
 
     match (self.state) {
-        LaunchState::ACTIVE { phase_id, end_ts, minted_supply, .. } => {
-            // Verify that the current phase has ended.
-            assert!(clock.timestamp_ms() >= end_ts, EPhaseNotEnded);
-
-            // Assert that there is a next phase.
-            let phase_idx = self.phase_ids.get_idx(&phase_id);
-            let next_phase_idx = phase_idx + 1;
-            assert!(next_phase_idx < self.phase_ids.size(), ENoNextPhase);
-
-            // Fetch details about the next phase.
-            let (next_phase_id, next_ts_range) = self.phase_ids.get_entry_by_idx(next_phase_idx);
-            let (next_phase_start_ts, next_phase_end_ts) = range_to_ts(*next_ts_range);
-
-            emit(LaunchPhaseAdvancedEvent {
-                from_phase_id: phase_id,
-                from_phase_idx: phase_idx,
-                to_phase_id: *next_phase_id,
-                to_phase_idx: next_phase_idx,
-                start_ts: next_phase_start_ts,
-                end_ts: next_phase_end_ts,
-            });
-
-            self.state =
-                LaunchState::ACTIVE {
-                    phase_id: *next_phase_id,
-                    start_ts: next_phase_start_ts,
-                    end_ts: next_phase_end_ts,
-                    minted_supply: minted_supply,
-                };
+        LaunchState::COMPLETED => {
+            // Assert that Phases have been destroyed.
+            assert!(self.phase_ids.is_empty(), EPhasesNotDestroyed);
+            // Destroy the Launch.
+            let Launch { id, items, revenue, .. } = self;
+            id.delete();
+            // Will abort if there are items remaining.
+            items.destroy_empty();
+            // Will abort if there are revenue balances remaining.
+            revenue.destroy_empty();
+            // Destroy the LaunchOperatorCap.
+            let LaunchOperatorCap { id, .. } = cap;
+            id.delete();
         },
         _ => abort EInvalidState,
     }
 }
 
-// Only return the active phase ID if the current timestamp is within the active phase's time range.
-public(package) fun active_phase_id<T: key + store>(self: &Launch<T>, clock: &Clock): ID {
-    match (self.state) {
-        LaunchState::ACTIVE { phase_id, start_ts, end_ts, .. } => {
-            assert!(clock.timestamp_ms() >= start_ts, EPhaseNotStarted);
-            assert!(clock.timestamp_ms() < end_ts, EPhaseEnded);
-            phase_id
-        },
-        _ => abort EInvalidState,
-    }
+// Destroy the LaunchAdminCap to claim a storage rebate.
+// Requires `is_withdrew_revenue` to be true, which is set when `withdraw_revenue()` is called,
+// and the Launch has no revenue balances left.
+public fun launch_admin_cap_destroy(cap: LaunchAdminCap) {
+    assert!(cap.is_withdrew_revenue == true, EAdminCapNotWithdrewRevenue);
+    let LaunchAdminCap { id, .. } = cap;
+    id.delete();
 }
 
-// Schedule a Phase for a Launch.
-public(package) fun schedule_phase<T: key + store>(
-    self: &mut Launch<T>,
-    phase_id: ID,
-    start_ts: u64,
-    end_ts: u64,
-) {
-    match (self.state) {
-        LaunchState::SCHEDULING => {
-            // Loop through the scheduled phases to ensure the the proposed start/end timestamps
-            // do not overlap with any of the existing phases.
-            let phases_len = self.phase_ids.size();
-            let mut i = 0;
-            while (i < phases_len) {
-                let (_, existing_phase_tx_range) = self.phase_ids.get_entry_by_idx(i);
-                let (existing_phase_start_ts, existing_phase_end_ts) = range_to_ts(
-                    *existing_phase_tx_range,
-                );
-                assert!(
-                    end_ts <= existing_phase_start_ts || start_ts >= existing_phase_end_ts,
-                    EPhaseTimeOverlap,
-                );
-                i = i + 1;
-            };
-            // If the phase ID already exists, it means the phase is being rescheduled,
-            // in which case, just update the phase's time range.
-            if (self.phase_ids.contains(&phase_id)) {
-                let ts_range = self.phase_ids.get_mut(&phase_id);
-                *ts_range = ts_to_range(start_ts, end_ts);
-            } else {
-                // Insert the new phase details into the launch.
-                self.phase_ids.insert(phase_id, ts_to_range(start_ts, end_ts));
-            };
-            // Sort phases by start timestamp.
-            self.sort_phases();
-        },
-        _ => abort EInvalidState,
-    }
+// Register a Phase with the Launch.
+public(package) fun register_phase<T: key + store>(self: &mut Launch<T>, phase_id: ID) {
+    assert!(self.phase_ids.size() < MAX_PHASE_COUNT, EExceedsMaxPhaseCount);
+    self.phase_ids.insert(phase_id);
 }
 
-// Unschedule a Phase from a Launch.
-public(package) fun unschedule_phase<T: key + store>(self: &mut Launch<T>, phase_id: ID) {
-    match (self.state) {
-        LaunchState::SCHEDULING => {
-            self.phase_ids.remove(&phase_id);
-        },
-        _ => abort EInvalidState,
-    }
-}
-
-// Description: Increment the minted supply by `quantity` when a Launch is in ACTIVE state.
-// Required State(s): ACTIVE
-public(package) fun increment_minted_supply<T: key + store>(self: &mut Launch<T>) {
-    match (&mut self.state) {
-        LaunchState::ACTIVE { minted_supply, .. } => {
-            *minted_supply = *minted_supply + 1;
-        },
-        _ => abort EInvalidState,
-    }
+// Unregister a Phase with the Launch.
+public(package) fun unregister_phase<T: key + store>(self: &mut Launch<T>, phase_id: ID) {
+    self.phase_ids.remove(&phase_id);
 }
 
 // Description: Deposit revenue (Balance<C>) into the Launch.
 public(package) fun deposit_revenue<T: key + store, C>(self: &mut Launch<T>, revenue: Balance<C>) {
+    let revenue_type = type_name::get<C>();
+    if (!self.revenue.contains(revenue_type)) {
+        self.revenue.add(revenue_type, revenue);
+    } else {
+        let balance: &mut Balance<C> = self.revenue.borrow_mut(revenue_type);
+        balance.join(revenue);
+    };
+}
+
+public(package) fun increment_minted_supply<T: key + store>(self: &mut Launch<T>) {
     match (self.state) {
-        LaunchState::ACTIVE { .. } => {
-            let revenue_type = type_name::get<C>();
-            if (!self.revenue.contains(revenue_type)) {
-                self.revenue.add(revenue_type, revenue);
-            } else {
-                let balance: &mut Balance<C> = self.revenue.borrow_mut(revenue_type);
-                balance.join(revenue);
-            };
+        LaunchState::ACTIVE { minted_supply } => {
+            self.state = LaunchState::ACTIVE { minted_supply: minted_supply + 1 };
         },
         _ => abort EInvalidState,
     }
 }
 
-public(package) fun total_supply<T: key + store>(self: &Launch<T>): u64 {
-    self.total_supply
+// Returns the number of items in the Launch.
+public(package) fun supply<T: key + store>(self: &Launch<T>): u64 {
+    self.items.length()
 }
 
+// Returns a reference to the items in the Launch.
 public(package) fun items<T: key + store>(self: &Launch<T>): &TableVec<T> {
     &self.items
 }
 
+// Returns a mutable reference to the items in the Launch.
 public(package) fun items_mut<T: key + store>(self: &mut Launch<T>): &mut TableVec<T> {
     &mut self.items
 }
 
+// Returns a reference to the revenue in the Launch.
 public(package) fun revenue<T: key + store>(self: &Launch<T>): &Bag {
     &self.revenue
 }
 
+// Returns a mutable reference to the revenue in the Launch.
 public(package) fun revenue_mut<T: key + store>(self: &mut Launch<T>): &mut Bag {
     &mut self.revenue
 }
 
+// Authorizes a LaunchAdminCap to access a Launch.
 public(package) fun launch_admin_cap_authorize(cap: &LaunchAdminCap, launch_id: ID) {
     assert!(cap.launch_id == launch_id, EInvalidLaunchAdminCap);
 }
 
+// Authorizes a LaunchOperatorCap to access a Launch.
 public(package) fun launch_operator_cap_authorize(cap: &LaunchOperatorCap, launch_id: ID) {
     assert!(cap.launch_id == launch_id, EInvalidLaunchOperatorCap);
 }
@@ -635,6 +563,38 @@ public fun launch_admin_cap_launch_id(cap: &LaunchAdminCap): ID {
 
 public fun launch_operator_cap_launch_id(cap: &LaunchOperatorCap): ID {
     cap.launch_id
+}
+
+// Returns true if the Launch is in SUPPLYING state.
+public fun is_supplying_state<T: key + store>(self: &Launch<T>): bool {
+    match (self.state) {
+        LaunchState::SUPPLYING { .. } => true,
+        _ => false,
+    }
+}
+
+// Returns true if the Launch is in ACTIVE state.
+public fun is_active_state<T: key + store>(self: &Launch<T>): bool {
+    match (self.state) {
+        LaunchState::ACTIVE { .. } => true,
+        _ => false,
+    }
+}
+
+// Returns true if the Launch is in PAUSED state.
+public fun is_paused_state<T: key + store>(self: &Launch<T>): bool {
+    match (self.state) {
+        LaunchState::PAUSED { .. } => true,
+        _ => false,
+    }
+}
+
+// Returns true if the Launch is in COMPLETED state.
+public fun is_completed_state<T: key + store>(self: &Launch<T>): bool {
+    match (self.state) {
+        LaunchState::COMPLETED => true,
+        _ => false,
+    }
 }
 
 // Description: Assert that the Launch has no Kiosk requirement.
@@ -652,33 +612,12 @@ public fun assert_kiosk_requirement_lock<T: key + store>(self: &Launch<T>) {
     assert!(self.kiosk_requirement == KioskRequirement::LOCK, ENotKioskRequirementLock);
 }
 
-// Description: Assert that the Launch is in COMPLETED state.
-public(package) fun assert_is_completed<T: key + store>(self: &Launch<T>) {
-    assert!(self.state == LaunchState::COMPLETED, EInvalidState);
-}
-
-// Description: Get the details of the last Phase of a Launch.
-fun get_last_phase_details<T: key + store>(self: &Launch<T>): (ID, u64, u64) {
-    let phase_count = self.phase_ids.size();
-    let (phase_id, ts_range) = self.phase_ids.get_entry_by_idx(phase_count - 1);
-    let (start_ts, end_ts) = range_to_ts(*ts_range);
-    (*phase_id, start_ts, end_ts)
-}
-
-// Description: Sort the Phases of a Launch by timestamp in ascending order.
-fun sort_phases<T: key + store>(self: &mut Launch<T>) {
-    // Extract phase IDs and time ranges as vectors, and quicksort them.
-    let (mut phase_ids, mut ts_ranges) = self.phase_ids.into_keys_values();
-    quicksort(&mut ts_ranges, &mut phase_ids, 0, self.phase_ids.size() - 1);
-    // Overwrite launch phases with the sorted vectors.
-    self.phase_ids = vec_map::from_keys_values(phase_ids, ts_ranges);
-}
-
-//=== Assertions ===
-
-// Description: Assert that the Launch has not started yet.
-fun assert_not_started<T: key + store>(self: &Launch<T>, clock: &Clock) {
-    let (_, ts_range) = self.phase_ids.get_entry_by_idx(0);
-    let (start_ts, _) = range_to_ts(*ts_range);
-    assert!(clock.timestamp_ms() < start_ts, ELaunchAlreadyStarted);
+// Assert the Launch is mintable, which means it's both in ACTIVE state and has items remaining.
+public fun assert_is_mintable<T: key + store>(self: &Launch<T>) {
+    match (self.state) {
+        LaunchState::ACTIVE { .. } => {
+            assert!(self.items.length() > 0, ENoRemainingSupply);
+        },
+        _ => abort ENotMintable,
+    }
 }
