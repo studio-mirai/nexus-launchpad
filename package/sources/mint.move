@@ -12,10 +12,7 @@ use sui::kiosk::{Self, Kiosk, KioskOwnerCap};
 use sui::random::Random;
 use sui::transfer_policy::TransferPolicy;
 
-const EIncorrectPaymentAmount: u64 = 301;
-const EIncorrectWhitelistCount: u64 = 302;
-const EIncorrectWhitelistForPhase: u64 = 303;
-const EPhaseMaxMintCountExceeded: u64 = 306;
+//=== Events ===
 
 public struct ItemMintedEvent has copy, drop {
     launch_id: ID,
@@ -25,6 +22,15 @@ public struct ItemMintedEvent has copy, drop {
     payment_type: TypeName,
     payment_value: u64,
 }
+
+//=== Errors ===
+
+const EIncorrectPaymentAmount: u64 = 30001;
+const EIncorrectWhitelistCount: u64 = 30002;
+const EIncorrectWhitelistForPhase: u64 = 30003;
+const EPhaseMaxMintCountExceeded: u64 = 30004;
+
+//=== Public Functions ===
 
 entry fun mint<T: key + store, C>(
     launch: &mut Launch<T>,
@@ -344,6 +350,8 @@ entry fun wl_mint_and_place_in_new_kiosk<T: key + store, C>(
     transfer::public_share_object(kiosk);
     transfer::public_transfer(kiosk_owner_cap, ctx.sender());
 }
+
+//=== Private Functions ===
 
 #[allow(lint(self_transfer))]
 fun internal_mint<T: key + store, C>(

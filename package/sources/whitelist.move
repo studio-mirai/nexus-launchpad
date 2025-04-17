@@ -18,6 +18,8 @@ public struct Whitelist has key, store {
     phase_id: ID,
 }
 
+//=== Events ===
+
 public struct WhitelistCreatedEvent has copy, drop {
     whitelist_id: ID,
     launch_id: ID,

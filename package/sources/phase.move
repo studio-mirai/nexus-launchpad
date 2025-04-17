@@ -92,23 +92,23 @@ public struct PaymentOptionRemovedEvent has copy, drop, store {
 
 //=== Errors ===
 
-const EInvalidPhaseState: u64 = 202;
-const ENoPaymentOptions: u64 = 204;
-const ENotWhitelistPhase: u64 = 205;
-const EInvalidRegisterPhasePromise: u64 = 207;
-const EInvalidMaxPhaseMintCount: u64 = 209;
-const EInvalidMaxAddressMint: u64 = 210;
-const EPhaseMaxCountExceedsLaunchSupply: u64 = 211;
-const EExceedsLaunchSupply: u64 = 212;
-const EMaxPhaseMintCountTooLow: u64 = 213;
-const EPhaseNotStarted: u64 = 214;
-const EPhaseEnded: u64 = 215;
-const EExceedsMaxPaymentTypeCount: u64 = 216;
-const ETimestampNotInFuture: u64 = 219;
-const EStartTsAfterEndTs: u64 = 220;
-const EStartTsBeforeEndTs: u64 = 221;
-const EPhaseNotEnded: u64 = 222;
-const EPhaseNotMintable: u64 = 223;
+const EExceedsLaunchSupply: u64 = 20001;
+const EExceedsMaxPaymentTypeCount: u64 = 20002;
+const EInvalidMaxAddressMint: u64 = 20003;
+const EInvalidMaxPhaseMintCount: u64 = 20004;
+const EInvalidPhaseState: u64 = 20005;
+const EInvalidRegisterPhasePromise: u64 = 20006;
+const EMaxPhaseMintCountTooLow: u64 = 20007;
+const ENoPaymentOptions: u64 = 20008;
+const ENotWhitelistPhase: u64 = 20009;
+const EPhaseEnded: u64 = 20010;
+const EPhaseMaxCountExceedsLaunchSupply: u64 = 20011;
+const EPhaseNotEnded: u64 = 20012;
+const EPhaseNotMintable: u64 = 20013;
+const EPhaseNotStarted: u64 = 20014;
+const EStartTsAfterEndTs: u64 = 20015;
+const EStartTsBeforeEndTs: u64 = 20016;
+const ETimestampNotInFuture: u64 = 20017;
 
 //=== Init Function ===
 
@@ -198,8 +198,6 @@ public fun register<T: key + store>(
     self.state = PhaseState::ACTIVE { start_ts: start_ts, end_ts: end_ts };
     // Destroy the RegisterPhasePromise hot potato.
     let RegisterPhasePromise { .. } = promise;
-    // Turn the Phase into a shared object.
-    transfer::share_object(self);
     // Emit PhaseRegisteredEvent.
     emit(PhaseRegisteredEvent {
         launch_id: launch.id(),
@@ -207,6 +205,8 @@ public fun register<T: key + store>(
         start_ts: start_ts,
         end_ts: end_ts,
     });
+    // Turn the Phase into a shared object.
+    transfer::share_object(self);
 }
 
 // Destroy a Phase.
@@ -222,15 +222,15 @@ public fun destroy<T: key + store>(
         PhaseState::ENDED => {
             // Unregister the Phase from the Launch.
             launch.unregister_phase(self.id());
-            // Destroy the Phase.
-            let Phase { id, participants, .. } = self;
-            id.delete();
-            participants.drop();
             // Emit PhaseDestroyedEvent.
             emit(PhaseDestroyedEvent {
                 launch_id: self.launch_id(),
                 phase_id: self.id(),
             });
+            // Destroy the Phase.
+            let Phase { id, participants, .. } = self;
+            id.delete();
+            participants.drop();
         },
         _ => abort EInvalidPhaseState,
     };

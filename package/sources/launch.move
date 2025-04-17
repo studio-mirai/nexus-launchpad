@@ -120,24 +120,22 @@ const MAX_PHASE_COUNT: u64 = 50;
 
 //=== Errors ===
 
-const EExceedsTargetSupply: u64 = 100;
-const EInvalidLaunchAdminCap: u64 = 101;
-const EInvalidLaunchId: u64 = 102;
-const EInvalidLaunchOperatorCap: u64 = 103;
-const EInvalidState: u64 = 104;
-const ENotKioskRequirementNone: u64 = 108;
-const ENotKioskRequirementPlace: u64 = 109;
-const ENotKioskRequirementLock: u64 = 110;
-const EInvalidPublisher: u64 = 111;
-const EPhaseNotStarted: u64 = 112;
-const EPhaseEnded: u64 = 113;
-const ETotalSupplyNotReached: u64 = 115;
-const EItemsNotEmpty: u64 = 117;
-const EPhasesNotDestroyed: u64 = 118;
-const EAdminCapNotWithdrewRevenue: u64 = 119;
-const ENotMintable: u64 = 121;
-const ENoRemainingSupply: u64 = 122;
-const EExceedsMaxPhaseCount: u64 = 123;
+const EExceedsMaxPhaseCount: u64 = 10001;
+const EExceedsTargetSupply: u64 = 10002;
+const EInvalidLaunchAdminCap: u64 = 10003;
+const EInvalidLaunchId: u64 = 10004;
+const EInvalidLaunchOperatorCap: u64 = 10005;
+const EInvalidPublisher: u64 = 10006;
+const EInvalidState: u64 = 10007;
+const ENotKioskRequirementLock: u64 = 10008;
+const ENotKioskRequirementNone: u64 = 10009;
+const ENotKioskRequirementPlace: u64 = 10010;
+const ENotMintable: u64 = 10011;
+const EItemsNotEmpty: u64 = 10012;
+const ENoRemainingSupply: u64 = 10013;
+const EPhasesNotDestroyed: u64 = 10014;
+const ETotalSupplyNotReached: u64 = 10015;
+const EAdminCapNotWithdrewRevenue: u64 = 10016;
 
 //=== Init Function ===
 
