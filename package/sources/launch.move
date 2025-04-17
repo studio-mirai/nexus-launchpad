@@ -37,6 +37,8 @@ public struct Launch<phantom T: key + store> has key {
     revenue: Bag,
     // An enum indicating whether a launch requires Kiosk (place or lock) or not.
     kiosk_requirement: KioskRequirement,
+    // The operators that can manage the phase.
+    operators: VecSet<address>,
 }
 
 // Capability object for admin-level permissiones.
@@ -50,8 +52,7 @@ public struct LaunchAdminCap has key, store {
 // Capability object for operator-level permissions.
 // Required for managing the launch (scheduling phases, changing states, etc.).
 // Can be sent to a launchpad operator to delegate launch management.
-public struct LaunchOperatorCap has key, store {
-    id: UID,
+public struct LaunchOperatorCap has drop {
     launch_id: ID,
 }
 
@@ -84,7 +85,6 @@ public enum LaunchState has copy, drop, store {
 public struct LaunchCreatedEvent has copy, drop {
     launch_id: ID,
     launch_admin_cap_id: ID,
-    launch_operator_cap_id: ID,
     launch_type: TypeName,
 }
 
@@ -136,6 +136,7 @@ const ENoRemainingSupply: u64 = 10013;
 const EPhasesNotDestroyed: u64 = 10014;
 const ETotalSupplyNotReached: u64 = 10015;
 const EAdminCapNotWithdrewRevenue: u64 = 10016;
+const ENotOperator: u64 = 10017;
 
 //=== Init Function ===
 
@@ -152,7 +153,7 @@ public fun new<T: key + store>(
     total_supply: u64,
     kiosk_requirement: KioskRequirement,
     ctx: &mut TxContext,
-): (Launch<T>, LaunchAdminCap, LaunchOperatorCap, ShareLaunchPromise) {
+): (Launch<T>, LaunchAdminCap, ShareLaunchPromise) {
     assert!(publisher.from_module<T>() == true, EInvalidPublisher);
 
     let mut launch = Launch<T> {
@@ -162,6 +163,7 @@ public fun new<T: key + store>(
         phase_ids: vec_set::empty(),
         revenue: bag::new(ctx),
         kiosk_requirement: kiosk_requirement,
+        operators: vec_set::empty(),
     };
 
     let launch_admin_cap = LaunchAdminCap {
@@ -170,27 +172,20 @@ public fun new<T: key + store>(
         is_withdrew_revenue: false,
     };
 
-    let launch_operator_cap = LaunchOperatorCap {
-        id: object::new(ctx),
-        launch_id: launch.id(),
-    };
-
     let promise = ShareLaunchPromise {
         launch_id: launch.id(),
     };
 
     // Link admin/operator caps to launch for easy discoverability.
     df::add(&mut launch.id, LaunchLink<LaunchAdminCap> {}, object::id(&launch_admin_cap));
-    df::add(&mut launch.id, LaunchLink<LaunchOperatorCap> {}, object::id(&launch_operator_cap));
 
     emit(LaunchCreatedEvent {
         launch_id: launch.id(),
         launch_admin_cap_id: launch_admin_cap.id.to_inner(),
-        launch_operator_cap_id: launch_operator_cap.id.to_inner(),
         launch_type: type_name::get<T>(),
     });
 
-    (launch, launch_admin_cap, launch_operator_cap, promise)
+    (launch, launch_admin_cap, promise)
 }
 
 // Create a new `KioskRequirement` with `NONE` variant.
@@ -426,34 +421,24 @@ public fun withdraw_items_and_lock_in_kiosk<T: key + store>(
 }
 
 // Withdraws revenue of the provided type from a Launch.
-// Only allowed when the Launch is in COMPLETED state.
 public fun withdraw_revenue<T: key + store, C>(
     self: &mut Launch<T>,
     cap: &mut LaunchAdminCap,
     ctx: &mut TxContext,
 ): Coin<C> {
+    // Verify the LaunchAdminCap matches the Launch.
     cap.authorize(self.id());
-
-    match (self.state) {
-        LaunchState::COMPLETED => {
-            let balance: Balance<C> = self.revenue.remove(type_name::get<C>());
-            let coin = coin::from_balance(balance, ctx);
-
-            if (self.revenue.is_empty()) {
-                cap.is_withdrew_revenue = true;
-            };
-
-            coin
-        },
-        _ => abort EInvalidState,
-    }
+    // Remove the revenue from the Launch.
+    let balance: Balance<C> = self.revenue.remove(type_name::get<C>());
+    // Convert the balance to a Coin.
+    coin::from_balance(balance, ctx)
 }
 
 // Destroy a Launch with the LaunchOperatorCap.
 // Requirements:
 // - The Launch must be in COMPLETED state.
 // - Phases must have been destroyed.
-public fun destroy<T: key + store>(self: Launch<T>, cap: LaunchOperatorCap) {
+public fun destroy<T: key + store>(self: Launch<T>, cap: &LaunchOperatorCap) {
     // Verify the LaunchOperatorCap matches the Launch.
     cap.authorize(self.id());
 
@@ -468,11 +453,38 @@ public fun destroy<T: key + store>(self: Launch<T>, cap: LaunchOperatorCap) {
             items.destroy_empty();
             // Will abort if there are revenue balances remaining.
             revenue.destroy_empty();
-            // Destroy the LaunchOperatorCap.
-            let LaunchOperatorCap { id, .. } = cap;
-            id.delete();
         },
         _ => abort EInvalidState,
+    }
+}
+
+// Add an operator to the Launch.
+public fun add_operator<T: key + store>(
+    self: &mut Launch<T>,
+    cap: &LaunchAdminCap,
+    operator: address,
+) {
+    cap.authorize(self.id());
+    self.operators.insert(operator);
+}
+
+// Remove an operator from the Launch.
+public fun remove_operator<T: key + store>(
+    self: &mut Launch<T>,
+    cap: &LaunchAdminCap,
+    operator: address,
+) {
+    cap.authorize(self.id());
+    self.operators.remove(&operator);
+}
+
+public fun request_operator_cap<T: key + store>(
+    self: &Launch<T>,
+    ctx: &TxContext,
+): LaunchOperatorCap {
+    assert!(self.operators.contains(&ctx.sender()), ENotOperator);
+    LaunchOperatorCap {
+        launch_id: self.id(),
     }
 }
 
