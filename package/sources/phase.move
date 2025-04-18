@@ -109,7 +109,7 @@ const EPhaseNotStarted: u64 = 20014;
 const EStartTsAfterEndTs: u64 = 20015;
 const EStartTsBeforeEndTs: u64 = 20016;
 const ETimestampNotInFuture: u64 = 20017;
-
+const ENotPublicPhase: u64 = 20018;
 //=== Init Function ===
 
 fun init(otw: PHASE, ctx: &mut TxContext) {
@@ -539,6 +539,10 @@ public fun assert_is_mintable<T: key + store>(self: &Phase<T>, clock: &Clock) {
         },
         _ => abort EPhaseNotMintable,
     }
+}
+
+public fun assert_is_public<T: key + store>(self: &Phase<T>) {
+    assert!(self.is_public_kind(), ENotPublicPhase);
 }
 
 public fun assert_is_whitelist<T: key + store>(self: &Phase<T>) {

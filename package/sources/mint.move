@@ -4,7 +4,6 @@ use nexus_launchpad::launch::Launch;
 use nexus_launchpad::phase::Phase;
 use nexus_launchpad::whitelist::Whitelist;
 use std::type_name::{Self, TypeName};
-use std::u64;
 use sui::clock::Clock;
 use sui::coin::Coin;
 use sui::event::emit;
@@ -29,6 +28,8 @@ const EIncorrectPaymentAmount: u64 = 30001;
 const EIncorrectWhitelistCount: u64 = 30002;
 const EIncorrectWhitelistForPhase: u64 = 30003;
 const EPhaseMaxMintCountExceeded: u64 = 30004;
+const EBulkMintNotAllowed: u64 = 30005;
+const EParticipantMintCountExceeded: u64 = 30006;
 
 //=== Public Functions ===
 
@@ -41,7 +42,10 @@ entry fun mint<T: key + store, C>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    // Assert the Launch does not require a Kiosk.
     launch.assert_kiosk_requirement_none();
+    // Assert the Phase is public.
+    phase.assert_is_public();
 
     let items = internal_mint(
         launch,
@@ -66,9 +70,10 @@ entry fun wl_mint<T: key + store, C>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    phase.assert_is_whitelist();
-
+    // Assert the Launch does not require a Kiosk.
     launch.assert_kiosk_requirement_none();
+    // Assert the Phase is whitelist.
+    phase.assert_is_whitelist();
 
     let items = internal_mint(
         launch,
@@ -97,7 +102,10 @@ entry fun mint_and_lock<T: key + store, C>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    // Assert the Launch requires a Kiosk.
     launch.assert_kiosk_requirement_lock();
+    // Assert the Phase is public.
+    phase.assert_is_public();
 
     let items = internal_mint(
         launch,
@@ -125,6 +133,9 @@ entry fun wl_mint_and_lock<T: key + store, C>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    // Assert the Launch requires a Kiosk with lock policy.
+    launch.assert_kiosk_requirement_lock();
+    // Assert the Phase is whitelist.
     phase.assert_is_whitelist();
 
     launch.assert_kiosk_requirement_lock();
@@ -154,7 +165,10 @@ entry fun mint_and_lock_in_new_kiosk<T: key + store, C>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    // Assert the Launch requires a Kiosk.
     launch.assert_kiosk_requirement_lock();
+    // Assert the Phase is public.
+    phase.assert_is_public();
 
     let (mut kiosk, kiosk_owner_cap) = kiosk::new(ctx);
 
@@ -191,6 +205,9 @@ entry fun wl_mint_and_lock_in_new_kiosk<T: key + store, C>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    // Assert the Launch requires a Kiosk with lock policy.
+    launch.assert_kiosk_requirement_lock();
+    // Assert the Phase is whitelist.
     phase.assert_is_whitelist();
 
     launch.assert_kiosk_requirement_lock();
@@ -232,7 +249,10 @@ entry fun mint_and_place<T: key + store, C>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    // Assert the Launch requires a Kiosk with place policy.
     launch.assert_kiosk_requirement_place();
+    // Assert the Phase is public.
+    phase.assert_is_public();
 
     let items = internal_mint(
         launch,
@@ -259,8 +279,9 @@ entry fun wl_mint_and_place<T: key + store, C>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    // Assert the Phase is whitelist.
     phase.assert_is_whitelist();
-
+    // Assert the Launch requires a Kiosk with place policy.
     launch.assert_kiosk_requirement_place();
 
     let items = internal_mint(
@@ -287,7 +308,10 @@ entry fun mint_and_place_in_new_kiosk<T: key + store, C>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    // Assert the Launch requires a Kiosk with place policy.
     launch.assert_kiosk_requirement_place();
+    // Assert the Phase is public.
+    phase.assert_is_public();
 
     let (mut kiosk, kiosk_owner_cap) = kiosk::new(ctx);
 
@@ -322,8 +346,9 @@ entry fun wl_mint_and_place_in_new_kiosk<T: key + store, C>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    // Assert the Phase is whitelist.
     phase.assert_is_whitelist();
-
+    // Assert the Launch requires a Kiosk with place policy.
     launch.assert_kiosk_requirement_place();
 
     let (mut kiosk, kiosk_owner_cap) = kiosk::new(ctx);
@@ -357,7 +382,7 @@ entry fun wl_mint_and_place_in_new_kiosk<T: key + store, C>(
 fun internal_mint<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
-    mut quantity: u64,
+    quantity: u64,
     payment: &mut Coin<C>,
     random: &Random,
     clock: &Clock,
@@ -369,19 +394,16 @@ fun internal_mint<T: key + store, C>(
     // Assert the Phase is mintable.
     // This performs a check that ensures the current timestamp is within the Phase's start and end timestamps.
     phase.assert_is_mintable(clock);
-    // Set the quantity to 1 if the Phase does not allow bulk minting and the requested quantity is greater than 1.
-    if (!phase.is_allow_bulk_mint() && quantity > 1) {
-        quantity = 1;
-    };
+    // Assert quantity is 1 if the Phase does not allow bulk minting.
+    if (!phase.is_allow_bulk_mint()) { assert!(quantity == 1, EBulkMintNotAllowed) };
     // Calculate the participant's remaining mint count by substracting the participant's
     // current mint count from the phase's max mint allocation per participant.
     let participant_remaining_mint_count =
         phase.max_mint_count_addr() - phase.participant_mint_count(ctx.sender());
-    // Update the quantity to the participant's remaining mint count
-    // if the requested quantity is greater than the participant's remaining mint count.
-    let quantity = u64::min(quantity, participant_remaining_mint_count);
+    // Assert the requested quantity is not greater than the participant's remaining mint count.
+    assert!(quantity <= participant_remaining_mint_count, EParticipantMintCountExceeded);
     // Assert the max mint count for the phase is not exceeded.
-    assert!(phase.remaining_mint_count() >= quantity, EPhaseMaxMintCountExceeded);
+    assert!(quantity <= phase.remaining_mint_count(), EPhaseMaxMintCountExceeded);
     // Get the unit price for the payment type.
     let unit_price = *phase.payment_types().get(&type_name::get<C>());
     // Assert the payment amount is greater than or equal to the unit price multiplied by the quantity.
