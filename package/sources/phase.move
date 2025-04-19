@@ -422,7 +422,7 @@ public(package) fun remaining_mint_count<T: key + store>(self: &Phase<T>): u64 {
 public(package) fun set_ready_state<T: key + store>(self: &mut Phase<T>, clock: &Clock) {
     match (self.state) {
         PhaseState::CREATED => {
-            assert!(self.start_ts >= clock.timestamp_ms(), EPhaseNotStarted);
+            assert!(clock.timestamp_ms() >= self.start_ts, EPhaseNotStarted);
             assert!(clock.timestamp_ms() < self.end_ts, EPhaseEnded);
             self.state = PhaseState::READY;
         },
