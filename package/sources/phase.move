@@ -423,7 +423,7 @@ public(package) fun set_ready_state<T: key + store>(self: &mut Phase<T>, clock: 
     match (self.state) {
         PhaseState::READY => {
             assert!(self.start_ts >= clock.timestamp_ms(), EPhaseNotStarted);
-            assert!(clock.timestamp_ms() <= self.end_ts, EPhaseEnded);
+            assert!(clock.timestamp_ms() < self.end_ts, EPhaseEnded);
             self.state = PhaseState::READY;
         },
         _ => abort EInvalidPhaseState,
@@ -532,7 +532,7 @@ public fun assert_is_mintable<T: key + store>(self: &Phase<T>, clock: &Clock) {
     match (self.state) {
         PhaseState::READY => {
             assert!(
-                clock.timestamp_ms() >= self.start_ts && clock.timestamp_ms() <= self.end_ts,
+                clock.timestamp_ms() >= self.start_ts && clock.timestamp_ms() < self.end_ts,
                 EPhaseNotMintable,
             );
         },
