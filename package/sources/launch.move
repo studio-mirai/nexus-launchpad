@@ -81,7 +81,6 @@ public enum LaunchState has copy, drop, store {
 }
 
 //=== Events ===
-
 public struct LaunchCreatedEvent has copy, drop {
     launch_id: ID,
     launch_admin_cap_id: ID,
@@ -636,6 +635,26 @@ public fun assert_kiosk_requirement_place<T: key + store>(self: &Launch<T>) {
 // Description: Assert that the Launch has a LOCK Kiosk requirement.
 public fun assert_kiosk_requirement_lock<T: key + store>(self: &Launch<T>) {
     assert!(self.kiosk_requirement == KioskRequirement::LOCK, ENotKioskRequirementLock);
+}
+
+// Assert the Launch is in SUPPLYING state.
+public fun assert_is_supplying_state<T: key + store>(self: &Launch<T>) {
+    assert!(self.is_supplying_state(), EInvalidState);
+}
+
+// Assert the Launch is in ACTIVE state.
+public fun assert_is_active_state<T: key + store>(self: &Launch<T>) {
+    assert!(self.is_active_state(), EInvalidState);
+}
+
+// Assert the Launch is in PAUSED state.
+public fun assert_is_paused_state<T: key + store>(self: &Launch<T>) {
+    assert!(self.is_paused_state(), EInvalidState);
+}
+
+// Assert the Launch is in COMPLETED state.
+public fun assert_is_completed_state<T: key + store>(self: &Launch<T>) {
+    assert!(self.is_completed_state(), EInvalidState);
 }
 
 // Assert the Launch is mintable, which means it's both in ACTIVE state and has items remaining.

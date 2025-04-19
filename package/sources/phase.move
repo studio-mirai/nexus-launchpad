@@ -103,15 +103,14 @@ const EInvalidRegisterPhasePromise: u64 = 20006;
 const EMaxPhaseMintCountTooLow: u64 = 20007;
 const ENoPaymentOptions: u64 = 20008;
 const ENotWhitelistPhase: u64 = 20009;
-const EPhaseEnded: u64 = 20010;
 const EPhaseMaxCountExceedsLaunchSupply: u64 = 20011;
 const EPhaseNotEnded: u64 = 20012;
 const EPhaseNotMintable: u64 = 20013;
-const EPhaseNotStarted: u64 = 20014;
 const EStartTsAfterEndTs: u64 = 20015;
 const EStartTsBeforeEndTs: u64 = 20016;
 const ETimestampNotInFuture: u64 = 20017;
 const ENotPublicPhase: u64 = 20018;
+
 //=== Init Function ===
 
 fun init(otw: PHASE, ctx: &mut TxContext) {
@@ -124,6 +123,7 @@ fun init(otw: PHASE, ctx: &mut TxContext) {
 // Create a new phase with the given parameters.
 public fun new<T: key + store>(
     cap: &LaunchOperatorCap,
+    launch: &Launch<T>,
     kind: PhaseKind,
     name: Option<String>,
     description: Option<String>,
@@ -135,6 +135,10 @@ public fun new<T: key + store>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Phase<T>, RegisterPhasePromise) {
+    // Verify the LaunchOperatorCap matches the provided Launch.
+    cap.authorize(launch.id());
+    // Assert the Launch is in ACTIVE state.
+    launch.assert_is_active_state();
     // Assert the max mint count for the phase is greater than 0.
     assert!(max_mint_count_phase > 0, EInvalidMaxPhaseMintCount);
     // Assert the max mint count for an address is greater than 0.
@@ -186,30 +190,41 @@ public fun new_phase_kind_whitelist(): PhaseKind {
 }
 
 public fun register<T: key + store>(
-    self: Phase<T>,
+    mut self: Phase<T>,
     promise: RegisterPhasePromise,
     cap: &LaunchOperatorCap,
     launch: &mut Launch<T>,
 ) {
     // Assert the LaunchOperatorCap matches the provided Launch.
     cap.authorize(launch.id());
-    // Assert the RegisterPhasePromise matches the provided Phase.
-    assert!(self.id() == promise.phase_id, EInvalidRegisterPhasePromise);
-    // Assert the Phase's mint count doesn't exceed the Launch's available supply.
-    assert!(self.max_mint_count_phase <= launch.supply(), EPhaseMaxCountExceedsLaunchSupply);
-    // Assert the Phase has at least one payment option.
-    assert!(!self.payment_types.is_empty(), ENoPaymentOptions);
-    // Register the Phase with the Launch.
-    launch.register_phase(self.id());
-    // Destroy the RegisterPhasePromise hot potato.
-    let RegisterPhasePromise { .. } = promise;
-    // Emit PhaseRegisteredEvent.
-    emit(PhaseRegisteredEvent {
-        launch_id: launch.id(),
-        phase_id: self.id(),
-    });
-    // Turn the Phase into a shared object.
-    transfer::share_object(self);
+
+    match (self.state) {
+        PhaseState::CREATED => {
+            // Assert the RegisterPhasePromise matches the provided Phase.
+            assert!(self.id() == promise.phase_id, EInvalidRegisterPhasePromise);
+            // Assert the Phase's mint count doesn't exceed the Launch's available supply.
+            assert!(
+                self.max_mint_count_phase <= launch.supply(),
+                EPhaseMaxCountExceedsLaunchSupply,
+            );
+            // Assert the Phase has at least one payment option.
+            assert!(!self.payment_types.is_empty(), ENoPaymentOptions);
+            // Register the Phase with the Launch.
+            launch.register_phase(self.id());
+            // Destroy the RegisterPhasePromise hot potato.
+            let RegisterPhasePromise { .. } = promise;
+            // Emit PhaseRegisteredEvent.
+            emit(PhaseRegisteredEvent {
+                launch_id: launch.id(),
+                phase_id: self.id(),
+            });
+            // Transition the Phase from CREATED state to READY state.
+            self.state = PhaseState::READY;
+            // Turn the Phase into a shared object.
+            transfer::share_object(self);
+        },
+        _ => abort EInvalidPhaseState,
+    }
 }
 
 // Destroy a Phase.
@@ -416,18 +431,6 @@ public(package) fun increment_whitelist_count<T: key + store>(self: &mut Phase<T
 // Returns the remaining number of mints that can be made in the Phase.
 public(package) fun remaining_mint_count<T: key + store>(self: &Phase<T>): u64 {
     self.max_mint_count_phase - self.current_mint_count
-}
-
-// Transition a Phase from CREATED state to READY state.
-public(package) fun set_ready_state<T: key + store>(self: &mut Phase<T>, clock: &Clock) {
-    match (self.state) {
-        PhaseState::CREATED => {
-            assert!(clock.timestamp_ms() >= self.start_ts, EPhaseNotStarted);
-            assert!(clock.timestamp_ms() < self.end_ts, EPhaseEnded);
-            self.state = PhaseState::READY;
-        },
-        _ => abort EInvalidPhaseState,
-    }
 }
 
 // Transition a Phase from READY state to ENDED state.
