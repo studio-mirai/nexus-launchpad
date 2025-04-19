@@ -37,8 +37,9 @@ fun init(otw: WHITELIST, ctx: &mut TxContext) {
     display.add(b"phase_id".to_string(), b"{phase_id}".to_string());
     display.add(
         b"image".to_string(),
-        b"https://admin.anima.nexus/api/wl_image/{phase_id}".to_string(),
+        b"https://admin.anima.nexus/api/wl_image/{launch_id}/{phase_id}".to_string(),
     );
+    display.update_version();
 
     transfer::public_transfer(display, ctx.sender());
     transfer::public_transfer(publisher, ctx.sender());

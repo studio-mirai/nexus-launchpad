@@ -177,7 +177,7 @@ public fun new<T: key + store>(
     };
 
     // Link admin/operator caps to launch for easy discoverability.
-    df::add(&mut launch.id, LaunchLink<LaunchAdminCap> {}, object::id(&launch_admin_cap));
+    launch.new_launch_link(&launch_admin_cap, &launch_admin_cap);
 
     emit(LaunchCreatedEvent {
         launch_id: launch.id(),
@@ -486,6 +486,22 @@ public fun request_operator_cap<T: key + store>(
     LaunchOperatorCap {
         launch_id: self.id(),
     }
+}
+
+// Create a new launch link.
+public fun new_launch_link<T: key + store, L: key>(
+    self: &mut Launch<T>,
+    cap: &LaunchAdminCap,
+    obj: &L,
+) {
+    cap.authorize(self.id());
+    df::add(&mut self.id, LaunchLink<L> {}, object::id(obj));
+}
+
+// Remove a launch link.
+public fun remove_launch_link<T: key + store, L: key>(self: &mut Launch<T>, cap: &LaunchAdminCap) {
+    cap.authorize(self.id());
+    df::remove<LaunchLink<L>, ID>(&mut self.id, LaunchLink<L> {});
 }
 
 // Destroy the LaunchAdminCap to claim a storage rebate.
