@@ -418,12 +418,12 @@ public(package) fun remaining_mint_count<T: key + store>(self: &Phase<T>): u64 {
     self.max_mint_count_phase - self.current_mint_count
 }
 
-// Transition a Phase from READY state to READY state.
+// Transition a Phase from CREATED state to READY state.
 public(package) fun set_ready_state<T: key + store>(self: &mut Phase<T>, clock: &Clock) {
     match (self.state) {
-        PhaseState::READY => {
-            assert!(self.start_ts >= clock.timestamp_ms(), EPhaseNotStarted);
-            assert!(clock.timestamp_ms() <= self.end_ts, EPhaseEnded);
+        PhaseState::CREATED => {
+            assert!(clock.timestamp_ms() >= self.start_ts, EPhaseNotStarted);
+            assert!(clock.timestamp_ms() < self.end_ts, EPhaseEnded);
             self.state = PhaseState::READY;
         },
         _ => abort EInvalidPhaseState,
@@ -532,7 +532,7 @@ public fun assert_is_mintable<T: key + store>(self: &Phase<T>, clock: &Clock) {
     match (self.state) {
         PhaseState::READY => {
             assert!(
-                clock.timestamp_ms() >= self.start_ts && clock.timestamp_ms() <= self.end_ts,
+                clock.timestamp_ms() >= self.start_ts && clock.timestamp_ms() < self.end_ts,
                 EPhaseNotMintable,
             );
         },
