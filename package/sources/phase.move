@@ -418,10 +418,10 @@ public(package) fun remaining_mint_count<T: key + store>(self: &Phase<T>): u64 {
     self.max_mint_count_phase - self.current_mint_count
 }
 
-// Transition a Phase from READY state to READY state.
+// Transition a Phase from CREATED state to READY state.
 public(package) fun set_ready_state<T: key + store>(self: &mut Phase<T>, clock: &Clock) {
     match (self.state) {
-        PhaseState::READY => {
+        PhaseState::CREATED => {
             assert!(self.start_ts >= clock.timestamp_ms(), EPhaseNotStarted);
             assert!(clock.timestamp_ms() < self.end_ts, EPhaseEnded);
             self.state = PhaseState::READY;
