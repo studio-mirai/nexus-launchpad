@@ -68,9 +68,12 @@ public fun dev_setup(
         phase_kind,
         option::some(b"Phase Name".to_string()),
         option::some(b"Phase Description".to_string()),
+        clock.timestamp_ms() + 1,
+        clock.timestamp_ms() + 7 * 24 * 60 * 60 * 1000, // 1 week
         phase_max_mint_allocation,
         phase_max_mint_count,
         phase_allow_bulk_mint,
+        clock,
         ctx,
     );
 
@@ -90,9 +93,6 @@ public fun dev_setup(
         schedule_promise,
         &launch_operator_cap,
         &mut launch,
-        clock.timestamp_ms() + 1,
-        clock.timestamp_ms() + 7 * 24 * 60 * 60 * 1000, // 1 week
-        clock,
     );
 
     // === ACTIVE ===
