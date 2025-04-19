@@ -186,7 +186,7 @@ public fun new_phase_kind_whitelist(): PhaseKind {
 }
 
 public fun register<T: key + store>(
-    mut self: Phase<T>,
+    self: Phase<T>,
     promise: RegisterPhasePromise,
     cap: &LaunchOperatorCap,
     launch: &mut Launch<T>,
