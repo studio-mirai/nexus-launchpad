@@ -230,8 +230,8 @@ public fun register<T: key + store>(
 // Destroy a Phase.
 public fun destroy<T: key + store>(
     self: Phase<T>,
-    launch: &mut Launch<T>,
     cap: &LaunchOperatorCap,
+    launch: &mut Launch<T>,
 ) {
     // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
     cap.authorize(self.launch_id());
