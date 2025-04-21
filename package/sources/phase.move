@@ -110,6 +110,10 @@ const EStartTsAfterEndTs: u64 = 20015;
 const EStartTsBeforeEndTs: u64 = 20016;
 const ETimestampNotInFuture: u64 = 20017;
 const ENotPublicPhase: u64 = 20018;
+const EPhaseNotZeroMintCount: u64 = 20019;
+const EPhaseNoRemainingMints: u64 = 20020;
+const EPhaseNotMintableTimeRange: u64 = 20021;
+const EMaxMintCountAddrNotChanged: u64 = 20022;
 
 //=== Init Function ===
 
@@ -120,7 +124,9 @@ fun init(otw: PHASE, ctx: &mut TxContext) {
 
 //=== Public Functions ===
 
-// Create a new phase with the given parameters.
+// Description: Create a new phase with the given parameters.
+//
+// Capability Objects: &LaunchOperatorCap
 public fun new<T: key + store>(
     cap: &LaunchOperatorCap,
     launch: &Launch<T>,
@@ -189,6 +195,9 @@ public fun new_phase_kind_whitelist(): PhaseKind {
     PhaseKind::WHITELIST { count: 0 }
 }
 
+// Description: Register the Phase with a Launch.
+//
+// Capability Objects: &LaunchOperatorCap, RegisterPhasePromise
 public fun register<T: key + store>(
     mut self: Phase<T>,
     promise: RegisterPhasePromise,
@@ -227,7 +236,9 @@ public fun register<T: key + store>(
     }
 }
 
-// Destroy a Phase.
+// Description: Destroy a Phase.
+//
+// Capability Objects: &LaunchOperatorCap
 public fun destroy<T: key + store>(
     self: Phase<T>,
     cap: &LaunchOperatorCap,
@@ -237,24 +248,36 @@ public fun destroy<T: key + store>(
     cap.authorize(self.launch_id());
 
     match (self.state) {
+        // If the Phase is in CREATED state, do nothing.
+        PhaseState::CREATED => {},
+        // If the Phase is in READY state, unregister the Phase from the Launch,
+        // and assert the Phase has no mints.
+        PhaseState::READY => {
+            // Unregister the Phase from the Launch.
+            launch.unregister_phase(self.id());
+            // Assert the Phase has no mints.
+            assert!(self.current_mint_count == 0, EPhaseNotZeroMintCount);
+        },
+        // If the Phase is in ENDED state, unregister the Phase from the Launch.
         PhaseState::ENDED => {
             // Unregister the Phase from the Launch.
             launch.unregister_phase(self.id());
-            // Emit PhaseDestroyedEvent.
-            emit(PhaseDestroyedEvent {
-                launch_id: self.launch_id(),
-                phase_id: self.id(),
-            });
-            // Destroy the Phase.
-            let Phase { id, participants, .. } = self;
-            id.delete();
-            participants.drop();
         },
-        _ => abort EInvalidPhaseState,
     };
+    // Emit PhaseDestroyedEvent.
+    emit(PhaseDestroyedEvent {
+        launch_id: self.launch_id(),
+        phase_id: self.id(),
+    });
+    // Destroy the Phase.
+    let Phase { id, participants, .. } = self;
+    id.delete();
+    participants.drop();
 }
 
-// Add a payment type to the Phase.
+// Description: Add a payment type to the Phase.
+//
+// Capability Objects: &LaunchOperatorCap
 public fun add_payment_type<T: key + store, C>(
     self: &mut Phase<T>,
     cap: &LaunchOperatorCap,
@@ -274,7 +297,9 @@ public fun add_payment_type<T: key + store, C>(
     });
 }
 
-// Remove a payment option from the Phase.
+// Description: Remove a payment option from the Phase.
+//
+// Capability Objects: &LaunchOperatorCap
 public fun remove_payment_type<T: key + store, C>(self: &mut Phase<T>, cap: &LaunchOperatorCap) {
     // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
     cap.authorize(self.launch_id());
@@ -290,24 +315,34 @@ public fun remove_payment_type<T: key + store, C>(self: &mut Phase<T>, cap: &Lau
     });
 }
 
-// Set the name of the Phase.
+// Description: Set the name of the Phase.
+//
+// Capability Objects: &LaunchOperatorCap
 public fun set_name<T: key + store>(self: &mut Phase<T>, cap: &LaunchOperatorCap, name: String) {
+    // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
     cap.authorize(self.launch_id());
+    // Update the Phase's `name` value.
     self.name.swap_or_fill(name);
 }
 
-// Set the description of the Phase.
+// Description: Set the description of the Phase.
+//
+// Capability Objects: &LaunchOperatorCap
 public fun set_description<T: key + store>(
     self: &mut Phase<T>,
     cap: &LaunchOperatorCap,
     description: String,
 ) {
+    // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
     cap.authorize(self.launch_id());
+    // Update the Phase's `description` value.
     self.description.swap_or_fill(description);
 }
 
-// Set the `is_allow_bulk_mint` value for the Phase.
+// Description: Set the `is_allow_bulk_mint` value for the Phase.
 // If true, minters will be able to mint multiple items in a single transaction.
+//
+// Capability Objects: &LaunchOperatorCap
 public fun set_is_allow_bulk_mint<T: key + store>(
     self: &mut Phase<T>,
     cap: &LaunchOperatorCap,
@@ -319,7 +354,9 @@ public fun set_is_allow_bulk_mint<T: key + store>(
     self.is_allow_bulk_mint = is_allow_bulk_mint;
 }
 
-// Set the maximum number of mints that can be made by a single address in the Phase.
+// Description: Set the maximum number of mints that can be made by a single address in the Phase.
+//
+// Capability Objects: &LaunchOperatorCap
 public fun set_max_mint_count_addr<T: key + store>(
     self: &mut Phase<T>,
     cap: &LaunchOperatorCap,
@@ -328,12 +365,15 @@ public fun set_max_mint_count_addr<T: key + store>(
     // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
     cap.authorize(self.launch_id());
     // Assert the value is greater than the current max mint count for an address.
-    assert!(max_mint_count_addr > self.max_mint_count_addr, EInvalidMaxAddressMint);
+    assert!(max_mint_count_addr > self.max_mint_count_addr, EMaxMintCountAddrNotChanged);
+    // Assert the value does not exceed the max mint count for the phase.
     assert!(max_mint_count_addr <= self.max_mint_count_phase, EInvalidMaxAddressMint);
+    // Update the Phase's `max_mint_count_addr` value.
     self.max_mint_count_addr = max_mint_count_addr;
 }
 
-// Set the maximum number of mints that can be made in the Phase.
+// Description: Set the maximum number of mints that can be made in the Phase.
+// Capability Objects: &LaunchOperatorCap
 public fun set_max_mint_count_phase<T: key + store>(
     self: &mut Phase<T>,
     cap: &LaunchOperatorCap,
@@ -354,22 +394,26 @@ public fun set_max_mint_count_phase<T: key + store>(
     self.max_mint_count_phase = max_mint_count_phase;
 }
 
-// Set the start timestamp for the Phase.
-// Requires the Phase to be in READY state.
+// Description: Set the start timestamp for the Phase.
+// State Requiments: READY
+// Capability Objects: &LaunchOperatorCap
 public fun set_start_ts<T: key + store>(
     self: &mut Phase<T>,
     cap: &LaunchOperatorCap,
     start_ts: u64,
     clock: &Clock,
 ) {
+    // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
     cap.authorize(self.launch_id());
-    // Assert the start timestamp is in the future.
-    assert!(start_ts > clock.timestamp_ms(), ETimestampNotInFuture);
 
     match (self.state) {
         PhaseState::READY => {
+            // Assert the start timestamp is in the future.
+            assert!(start_ts > clock.timestamp_ms(), ETimestampNotInFuture);
+            // Assert the start timestamp is before the end timestamp.
             assert!(self.start_ts < self.end_ts, EStartTsAfterEndTs);
-            self.state = PhaseState::READY;
+            // Update the Phase's `start_ts` value.
+            self.start_ts = start_ts;
         },
         _ => abort EInvalidPhaseState,
     }
@@ -383,14 +427,42 @@ public fun set_end_ts<T: key + store>(
     end_ts: u64,
     clock: &Clock,
 ) {
+    // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
     cap.authorize(self.launch_id());
-    // Assert the end timestamp is in the future.
-    assert!(end_ts > clock.timestamp_ms(), ETimestampNotInFuture);
 
     match (self.state) {
         PhaseState::READY => {
+            // Assert the end timestamp is in the future.
+            assert!(end_ts > clock.timestamp_ms(), ETimestampNotInFuture);
+            // Assert the end timestamp is after the start timestamp.
             assert!(self.end_ts > self.start_ts, EStartTsBeforeEndTs);
-            self.state = PhaseState::READY;
+            // Update the Phase's `end_ts` value.
+            self.end_ts = end_ts;
+        },
+        _ => abort EInvalidPhaseState,
+    }
+}
+
+// Description: Transition a Phase from READY state to ENDED state.
+// Capability Objects: &LaunchOperatorCap
+public fun set_ended_state<T: key + store>(
+    self: &mut Phase<T>,
+    cap: &LaunchOperatorCap,
+    clock: &Clock,
+) {
+    // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
+    cap.authorize(self.launch_id());
+
+    match (self.state) {
+        PhaseState::READY => {
+            // Assert the current timestamp is after the end timestamp,
+            // or the current mint count is equal to the max mint count for the phase.
+            assert!(
+                clock.timestamp_ms() > self.end_ts || self.current_mint_count == self.max_mint_count_phase,
+                EPhaseNotEnded,
+            );
+            // Transition the Phase from READY state to ENDED state.
+            self.state = PhaseState::ENDED;
         },
         _ => abort EInvalidPhaseState,
     }
@@ -431,17 +503,6 @@ public(package) fun increment_whitelist_count<T: key + store>(self: &mut Phase<T
 // Returns the remaining number of mints that can be made in the Phase.
 public(package) fun remaining_mint_count<T: key + store>(self: &Phase<T>): u64 {
     self.max_mint_count_phase - self.current_mint_count
-}
-
-// Transition a Phase from READY state to ENDED state.
-public(package) fun set_ended_state<T: key + store>(self: &mut Phase<T>, clock: &Clock) {
-    match (self.state) {
-        PhaseState::READY => {
-            assert!(clock.timestamp_ms() > self.end_ts, EPhaseNotEnded);
-            self.state = PhaseState::ENDED;
-        },
-        _ => abort EInvalidPhaseState,
-    }
 }
 
 // Returns true if the Phase has PUBLIC kind.
@@ -534,12 +595,15 @@ fun assert_valid_ts_range(start_ts: u64, end_ts: u64, clock: &Clock) {
 public fun assert_is_mintable<T: key + store>(self: &Phase<T>, clock: &Clock) {
     match (self.state) {
         PhaseState::READY => {
+            // Assert the current timestamp is between the start and end timestamps.
             assert!(
                 clock.timestamp_ms() >= self.start_ts && clock.timestamp_ms() < self.end_ts,
-                EPhaseNotMintable,
+                EPhaseNotMintableTimeRange,
             );
+            // Assert the current mint count does not exceed the max mint count for the phase.
+            assert!(self.current_mint_count < self.max_mint_count_phase, EPhaseNoRemainingMints);
         },
-        _ => abort EPhaseNotMintable,
+        _ => abort EInvalidPhaseState,
     }
 }
 
