@@ -112,6 +112,10 @@ fun begin_with_phase(
     let mut runner = begin(LAUNCH_SUPPLY, kiosk_req);
     runner.launch__add_items(LAUNCH_SUPPLY);
 
+    // LaunchState::ACTIVE
+
+    runner.launch__set_active_state();
+
     // PhaseState::CREATED
 
     let (mut phase, schedule_promise) = runner.phase__new__default(phase_kind);
@@ -123,10 +127,6 @@ fun begin_with_phase(
         &runner.launch_operator_cap,
         &mut runner.launch,
     );
-
-    // LaunchState::ACTIVE
-
-    runner.launch__set_active_state();
 
     return runner
 }
@@ -168,8 +168,9 @@ fun phase__new__default(
 ): (Phase<DevNft>, RegisterPhasePromise) {
     let clock = &runner.clock;
     let now = clock.timestamp_ms();
-    let (mut phase, schedule_promise) = phase::new<DevNft>(
+    let (phase, schedule_promise) = phase::new<DevNft>(
         &runner.launch_operator_cap,
+        &runner.launch,
         kind,
         option::some(b"Phase Name".to_string()),
         option::some(b"Phase Description".to_string()),
@@ -182,7 +183,6 @@ fun phase__new__default(
         runner.scen.ctx(),
     );
     runner.clock.increment_for_testing(PHASE_START_TS);
-    phase.set_ready_state(&runner.clock);
     return (phase, schedule_promise)
 }
 
@@ -443,8 +443,8 @@ fun test_mint_ok_kiosk_place()
 //     destroy(runner);
 // }
 
-#[test, expected_failure(abort_code = phase::EPhaseNotMintable)]
-fun test_mint_e_phase_ended()
+#[test, expected_failure(abort_code = phase::EPhaseNotMintableTimeRange)]
+fun test_mint_e_phase_not_mintable_time_range()
 {
     let mut runner = begin_with_phase(
         launch::new_kiosk_requirement_none(),
@@ -458,8 +458,8 @@ fun test_mint_e_phase_ended()
     destroy(runner);
 }
 
-#[test, expected_failure(abort_code = mint::EPhaseMaxMintCountExceeded)]
-fun test_mint_e_phase_max_mint_count_exceeded()
+#[test, expected_failure(abort_code = phase::EPhaseNoRemainingMints)]
+fun test_mint_e_phase_no_remaining_mints()
 {
     let mut runner = begin_with_phase(
         launch::new_kiosk_requirement_none(),
@@ -527,6 +527,7 @@ fun test_mint_e_incorrect_whitelist_for_phase()
 
     let mut runner = begin(LAUNCH_SUPPLY, launch::new_kiosk_requirement_none());
     runner.launch__add_items(LAUNCH_SUPPLY);
+    runner.launch__set_active_state();
 
     // PhaseState::CREATED
 
@@ -551,9 +552,6 @@ fun test_mint_e_incorrect_whitelist_for_phase()
         &mut runner.launch,
     );
 
-    // LaunchState::ACTIVE
-
-    runner.launch__set_active_state();
     runner.clock.increment_for_testing(35 * ONE_HOUR); // middle of phase2
     // let cap = &runner.launch_operator_cap;
     // let clock = &runner.clock;
@@ -589,14 +587,15 @@ fun test_schedule_e_phase_max_count_exceeds_launch_supply()
     // LaunchState::SUPPLYING
 
     let mut runner = begin(LAUNCH_SUPPLY, launch::new_kiosk_requirement_none());
-
     runner.launch__add_items(LAUNCH_SUPPLY);
+    runner.launch__set_active_state();
 
     // PhaseState::CREATED
 
     let clock = &runner.clock;
     let (mut phase, schedule_promise) = phase::new<DevNft>(
         &runner.launch_operator_cap,
+        &runner.launch,
         phase::new_phase_kind_public(),
         option::some(b"Phase Name".to_string()),
         option::some(b"Phase Description".to_string()),

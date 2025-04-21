@@ -91,7 +91,6 @@ fun test_kiosk_none()
 
     let mut launch: Launch<DevNft> = runner.scen.take_shared();
     let mut phase: Phase<DevNft> = runner.scen.take_shared();
-    phase.set_ready_state(&runner.clock);
     let mut pay_coin = runner.send_sui(3_000_000_000);
 
     mint::mint(
@@ -133,7 +132,6 @@ fun test_kiosk_place()
 
     let mut launch: Launch<DevNft> = runner.scen.take_shared();
     let mut phase: Phase<DevNft> = runner.scen.take_shared();
-    phase.set_ready_state(&runner.clock);
     let mut pay_coin = runner.send_sui(3_000_000_000);
 
     let (mut kiosk, kiosk_cap) = kiosk::new(runner.scen.ctx());
@@ -181,7 +179,6 @@ fun test_kiosk_none_wl()
 
     let mut launch: Launch<DevNft> = runner.scen.take_shared();
     let mut phase: Phase<DevNft> = runner.scen.take_shared();
-    phase.set_ready_state(&runner.clock);
     let mut pay_coin = runner.send_sui(3_000_000_000);
 
     let wl1 = runner.scen.take_from_sender<Whitelist>();
