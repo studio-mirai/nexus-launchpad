@@ -138,8 +138,6 @@ entry fun wl_mint_and_lock<T: key + store, C>(
     // Assert the Phase is whitelist.
     phase.assert_is_whitelist();
 
-    launch.assert_kiosk_requirement_lock();
-
     let items = internal_mint(
         launch,
         phase,
@@ -209,8 +207,6 @@ entry fun wl_mint_and_lock_in_new_kiosk<T: key + store, C>(
     launch.assert_kiosk_requirement_lock();
     // Assert the Phase is whitelist.
     phase.assert_is_whitelist();
-
-    launch.assert_kiosk_requirement_lock();
 
     let (mut kiosk, kiosk_owner_cap) = kiosk::new(ctx);
 
@@ -406,12 +402,13 @@ fun internal_mint<T: key + store, C>(
     assert!(quantity <= phase.remaining_mint_count(), EPhaseMaxMintCountExceeded);
     // Get the unit price for the payment type.
     let unit_price = *phase.payment_types().get(&type_name::get<C>());
-
+    // Calculate the required payment value.
+    let required_payment_value = unit_price * quantity;
+    // Assert the payment amount is greater than or equal to the unit price multiplied by the quantity.
+    assert!(payment.value() >= required_payment_value, EIncorrectPaymentAmount);
+    // If the unit price is greater than 0, deposit the revenue into the Launch.
+    // Otherwise, there is no revenue to deposit.
     if (unit_price > 0) {
-        // Calculate the required payment value.
-        let required_payment_value = unit_price * quantity;
-        // Assert the payment amount is greater than or equal to the unit price multiplied by the quantity.
-        assert!(payment.value() >= required_payment_value, EIncorrectPaymentAmount);
         // Get a mutable reference to the payment balance, and split the purchase amount from the payment balance.
         let revenue = payment.balance_mut().split(required_payment_value);
         // Deposit revenue into the Launch.
@@ -421,9 +418,10 @@ fun internal_mint<T: key + store, C>(
     let mut items: vector<T> = vector[];
     let mut rg = random.new_generator(ctx);
     let mut i = 0;
+    let mut remaining_items = launch.items().length();
     while (i < quantity) {
         // Randomly select an item from the Launch.
-        let item_idx = rg.generate_u64_in_range(0, launch.items().length() - 1);
+        let item_idx = rg.generate_u64_in_range(0, remaining_items - 1);
         let item = launch.items_mut().swap_remove(item_idx);
         // Emit ItemMintedEvent.
         emit(ItemMintedEvent {
@@ -440,6 +438,8 @@ fun internal_mint<T: key + store, C>(
         launch.increment_minted_supply();
         // Increment the current mint count for the Phase.
         phase.increment_mint_count(ctx);
+        // Decrement the remaining items.
+        remaining_items = remaining_items - 1;
         // Increment the loop counter.
         i = i + 1;
     };

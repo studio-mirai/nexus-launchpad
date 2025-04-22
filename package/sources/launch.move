@@ -429,6 +429,10 @@ public fun withdraw_revenue<T: key + store, C>(
     cap.authorize(self.id());
     // Remove the revenue from the Launch.
     let balance: Balance<C> = self.revenue.remove(type_name::get<C>());
+    // Set `is_withdrew_revenue` to true if all revenue has been withdrawn.
+    if (self.revenue.is_empty()) {
+        cap.is_withdrew_revenue = true;
+    };
     // Convert the balance to a Coin.
     coin::from_balance(balance, ctx)
 }
