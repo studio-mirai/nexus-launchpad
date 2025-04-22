@@ -105,15 +105,14 @@ const ENoPaymentOptions: u64 = 20008;
 const ENotWhitelistPhase: u64 = 20009;
 const EPhaseMaxCountExceedsLaunchSupply: u64 = 20011;
 const EPhaseNotEnded: u64 = 20012;
-const EPhaseNotMintable: u64 = 20013;
-const EStartTsAfterEndTs: u64 = 20015;
-const EStartTsBeforeEndTs: u64 = 20016;
-const ETimestampNotInFuture: u64 = 20017;
-const ENotPublicPhase: u64 = 20018;
-const EPhaseNotZeroMintCount: u64 = 20019;
-const EPhaseNoRemainingMints: u64 = 20020;
-const EPhaseNotMintableTimeRange: u64 = 20021;
-const EMaxMintCountAddrNotChanged: u64 = 20022;
+const EStartTsAfterEndTs: u64 = 20013;
+const EStartTsBeforeEndTs: u64 = 20014;
+const ETimestampNotInFuture: u64 = 20015;
+const ENotPublicPhase: u64 = 20016;
+const EPhaseNotZeroMintCount: u64 = 20017;
+const EPhaseNoRemainingMints: u64 = 20018;
+const EPhaseNotMintableTimeRange: u64 = 20019;
+const EMaxMintCountAddrNotChanged: u64 = 20020;
 
 //=== Init Function ===
 
