@@ -26,8 +26,6 @@ public fun dev_setup(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    // === SUPPLYING ===
-
     // create launch
     let (
         mut launch,
@@ -43,7 +41,7 @@ public fun dev_setup(
     launch.add_operator(&launch_admin_cap, ctx.sender());
     let launch_operator_cap = launch.request_operator_cap(ctx);
 
-    // add items
+    // add items to launch
     let items = vector::tabulate!(
         launch_total_supply,
         |i| dev_nft::new_dev_nft(
@@ -55,7 +53,8 @@ public fun dev_setup(
     );
     launch.add_items(&launch_operator_cap, items);
 
-    // === create and configure phase ===
+    // activate launch
+    launch.set_active_state(&launch_operator_cap);
 
     // create phase
     let phase_kind = if (wl_amount > 0) {
@@ -65,6 +64,7 @@ public fun dev_setup(
     };
     let (mut phase, schedule_promise) = phase::new<DevNft>(
         &launch_operator_cap,
+        &launch,
         phase_kind,
         option::some(b"Phase Name".to_string()),
         option::some(b"Phase Description".to_string()),
@@ -86,18 +86,12 @@ public fun dev_setup(
         transfer::public_transfer(wl, ctx.sender());
     });
 
-    // === SCHEDULING ===
-
     // schedule phase
     phase.register(
         schedule_promise,
         &launch_operator_cap,
         &mut launch,
     );
-
-    // === ACTIVE ===
-
-    launch.set_active_state(&launch_operator_cap);
 
     // === clean up ===
 
