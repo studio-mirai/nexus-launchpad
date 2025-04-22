@@ -37,7 +37,7 @@ entry fun mint<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
-    payment: &mut Coin<C>,
+    payment: Coin<C>,
     random: &Random,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -64,7 +64,7 @@ entry fun wl_mint<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
-    payment: &mut Coin<C>,
+    payment: Coin<C>,
     whitelists: vector<Whitelist>,
     random: &Random,
     clock: &Clock,
@@ -94,7 +94,7 @@ entry fun mint_and_lock<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
-    payment: &mut Coin<C>,
+    payment: Coin<C>,
     kiosk: &mut Kiosk,
     kiosk_owner_cap: &KioskOwnerCap,
     policy: &TransferPolicy<T>,
@@ -124,7 +124,7 @@ entry fun wl_mint_and_lock<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
-    payment: &mut Coin<C>,
+    payment: Coin<C>,
     whitelists: vector<Whitelist>,
     kiosk: &mut Kiosk,
     kiosk_owner_cap: &KioskOwnerCap,
@@ -157,7 +157,7 @@ entry fun mint_and_lock_in_new_kiosk<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
-    payment: &mut Coin<C>,
+    payment: Coin<C>,
     policy: &TransferPolicy<T>,
     random: &Random,
     clock: &Clock,
@@ -196,7 +196,7 @@ entry fun wl_mint_and_lock_in_new_kiosk<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
-    payment: &mut Coin<C>,
+    payment: Coin<C>,
     whitelists: vector<Whitelist>,
     policy: &TransferPolicy<T>,
     random: &Random,
@@ -238,7 +238,7 @@ entry fun mint_and_place<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
-    payment: &mut Coin<C>,
+    payment: Coin<C>,
     kiosk: &mut Kiosk,
     kiosk_owner_cap: &KioskOwnerCap,
     random: &Random,
@@ -267,7 +267,7 @@ entry fun wl_mint_and_place<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
-    payment: &mut Coin<C>,
+    payment: Coin<C>,
     whitelists: vector<Whitelist>,
     kiosk: &mut Kiosk,
     kiosk_owner_cap: &KioskOwnerCap,
@@ -299,7 +299,7 @@ entry fun mint_and_place_in_new_kiosk<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
-    payment: &mut Coin<C>,
+    payment: Coin<C>,
     random: &Random,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -336,7 +336,7 @@ entry fun wl_mint_and_place_in_new_kiosk<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
-    payment: &mut Coin<C>,
+    payment: Coin<C>,
     whitelists: vector<Whitelist>,
     random: &Random,
     clock: &Clock,
@@ -379,7 +379,7 @@ fun internal_mint<T: key + store, C>(
     launch: &mut Launch<T>,
     phase: &mut Phase<T>,
     quantity: u64,
-    payment: &mut Coin<C>,
+    payment: Coin<C>,
     random: &Random,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -405,16 +405,16 @@ fun internal_mint<T: key + store, C>(
     // Calculate the required payment value.
     let required_payment_value = unit_price * quantity;
     // Assert the payment amount is greater than or equal to the unit price multiplied by the quantity.
-    assert!(payment.value() >= required_payment_value, EIncorrectPaymentAmount);
-    // If the unit price is greater than 0, deposit the revenue into the Launch.
-    // Otherwise, there is no revenue to deposit.
-    if (unit_price > 0) {
-        // Get a mutable reference to the payment balance, and split the purchase amount from the payment balance.
-        let revenue = payment.balance_mut().split(required_payment_value);
-        // Deposit revenue into the Launch.
-        launch.deposit_revenue(revenue);
+    assert!(payment.value() == required_payment_value, EIncorrectPaymentAmount);
+    // Destroy the payment coin.
+    let payment_balance = payment.into_balance();
+    // If the payment value is 0, destroy the payment balance.
+    if (unit_price == 0) {
+        payment_balance.destroy_zero();
+    } else {
+        // If the payment value is greater than 0, deposit the revenue into the Launch.
+        launch.deposit_revenue(payment_balance);
     };
-
     let mut items: vector<T> = vector[];
     let mut rg = random.new_generator(ctx);
     let mut i = 0;

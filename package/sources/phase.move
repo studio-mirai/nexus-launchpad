@@ -411,7 +411,7 @@ public fun set_start_ts<T: key + store>(
             // Assert the start timestamp is in the future.
             assert!(start_ts > clock.timestamp_ms(), ETimestampNotInFuture);
             // Assert the start timestamp is before the end timestamp.
-            assert!(self.start_ts < self.end_ts, EStartTsAfterEndTs);
+            assert!(start_ts < self.end_ts, EStartTsAfterEndTs);
             // Update the Phase's `start_ts` value.
             self.start_ts = start_ts;
         },
@@ -435,7 +435,7 @@ public fun set_end_ts<T: key + store>(
             // Assert the end timestamp is in the future.
             assert!(end_ts > clock.timestamp_ms(), ETimestampNotInFuture);
             // Assert the end timestamp is after the start timestamp.
-            assert!(self.end_ts > self.start_ts, EStartTsBeforeEndTs);
+            assert!(end_ts > self.start_ts, EStartTsBeforeEndTs);
             // Update the Phase's `end_ts` value.
             self.end_ts = end_ts;
         },
