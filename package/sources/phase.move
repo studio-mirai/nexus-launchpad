@@ -137,7 +137,6 @@ public fun new<T: key + store>(
     max_mint_count_addr: u64,
     max_mint_count_phase: u64,
     is_allow_bulk_mint: bool,
-    clock: &Clock,
     ctx: &mut TxContext,
 ): (Phase<T>, RegisterPhasePromise) {
     // Verify the LaunchOperatorCap matches the provided Launch.
@@ -151,7 +150,7 @@ public fun new<T: key + store>(
     // Assert the max mint count for an address does not exceed the max mint count for the phase.
     assert!(max_mint_count_addr <= max_mint_count_phase, EInvalidMaxAddressMint);
     // Assert the start/end timestamps are valid.
-    assert_valid_ts_range(start_ts, end_ts, clock);
+    assert!(end_ts > start_ts, EStartTsAfterEndTs);
 
     let phase = Phase<T> {
         id: object::new(ctx),
@@ -580,13 +579,6 @@ public fun max_mint_count_phase<T: key + store>(self: &Phase<T>): u64 {
 
 public fun payment_types<T: key + store>(self: &Phase<T>): &VecMap<TypeName, u64> {
     &self.payment_types
-}
-
-fun assert_valid_ts_range(start_ts: u64, end_ts: u64, clock: &Clock) {
-    // Assert the start timestamp is in the future.
-    assert!(start_ts > clock.timestamp_ms(), 1);
-    // Assert the end timestamp is after the start timestamp.
-    assert!(end_ts > start_ts, 2);
 }
 
 //=== Assertions ===
