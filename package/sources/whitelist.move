@@ -32,12 +32,19 @@ fun init(otw: WHITELIST, ctx: &mut TxContext) {
     let publisher = package::claim(otw, ctx);
 
     let mut display = display::new<Whitelist>(&publisher, ctx);
-    display.add(b"item_type".to_string(), b"{item_type}".to_string());
-    display.add(b"launch_id".to_string(), b"{launch_id}".to_string());
-    display.add(b"phase_id".to_string(), b"{phase_id}".to_string());
-    display.add(
-        b"image".to_string(),
-        b"https://admin.anima.nexus/api/wl_image/{launch_id}/{phase_id}".to_string(),
+    display.add_multiple(
+        vector[
+            b"item_type".to_string(),
+            b"launch_id".to_string(),
+            b"phase_id".to_string(),
+            b"image_url".to_string(),
+        ],
+        vector[
+            b"{item_type}".to_string(),
+            b"{launch_id}".to_string(),
+            b"{phase_id}".to_string(),
+            b"https://allow.anima.nexus/{launch_id}/{phase_id}.webp".to_string(),
+        ],
     );
     display.update_version();
 
