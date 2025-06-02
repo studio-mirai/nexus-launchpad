@@ -11,6 +11,7 @@ use sui::event::emit;
 use sui::kiosk::{Kiosk, KioskOwnerCap};
 use sui::package::{Self, Publisher};
 use sui::table_vec::{Self, TableVec};
+use sui::transfer::Receiving;
 use sui::transfer_policy::TransferPolicy;
 use sui::vec_set::{Self, VecSet};
 
@@ -514,6 +515,16 @@ public fun launch_admin_cap_destroy(cap: LaunchAdminCap) {
     assert!(cap.is_withdrew_revenue == true, EAdminCapNotWithdrewRevenue);
     let LaunchAdminCap { id, .. } = cap;
     id.delete();
+}
+
+// Receive an object that's been sent to the Launch.
+public fun receive<T: key + store, R: key + store>(
+    self: &mut Launch<T>,
+    cap: &LaunchOperatorCap,
+    obj_to_receive: Receiving<R>,
+): R {
+    cap.authorize(self.id());
+    transfer::public_receive(&mut self.id, obj_to_receive)
 }
 
 // Register a Phase with the Launch.

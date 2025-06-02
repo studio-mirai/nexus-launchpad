@@ -92,6 +92,12 @@ public struct PaymentOptionRemovedEvent has copy, drop, store {
     payment_type: TypeName,
 }
 
+public struct PaymentOptionUpdatedEvent has copy, drop, store {
+    phase_id: ID,
+    payment_type: TypeName,
+    payment_value: u64,
+}
+
 //=== Errors ===
 
 const EExceedsLaunchSupply: u64 = 20001;
@@ -102,7 +108,8 @@ const EInvalidPhaseState: u64 = 20005;
 const EInvalidRegisterPhasePromise: u64 = 20006;
 const EMaxPhaseMintCountTooLow: u64 = 20007;
 const ENoPaymentOptions: u64 = 20008;
-const ENotWhitelistPhase: u64 = 20009;
+const EInvalidPaymentType: u64 = 20009;
+const ENotWhitelistPhase: u64 = 20010;
 const EPhaseMaxCountExceedsLaunchSupply: u64 = 20011;
 const EPhaseNotEnded: u64 = 20012;
 const EStartTsAfterEndTs: u64 = 20013;
@@ -313,6 +320,30 @@ public fun remove_payment_type<T: key + store, C>(self: &mut Phase<T>, cap: &Lau
     });
 }
 
+// Description: Update the value for an existing payment option.
+//
+// Capability Objects: &LaunchOperatorCap
+public fun update_payment_type<T: key + store, C>(
+    self: &mut Phase<T>,
+    payment_value: u64,
+    cap: &LaunchOperatorCap,
+) {
+    // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
+    cap.authorize(self.launch_id());
+    let payment_type = type_name::get<C>();
+    // Assert the payment option exists.
+    assert!(self.payment_types.contains(&payment_type), EInvalidPaymentType);
+    // Update the payment option's value.
+    let current_payment_value = self.payment_types.get_mut(&payment_type);
+    *current_payment_value = payment_value;
+    // Emit PaymentOptionRemovedEvent.
+    emit(PaymentOptionUpdatedEvent {
+        phase_id: self.id(),
+        payment_type: payment_type,
+        payment_value: payment_value,
+    });
+}
+
 // Description: Set the name of the Phase.
 //
 // Capability Objects: &LaunchOperatorCap
@@ -362,8 +393,6 @@ public fun set_max_mint_count_addr<T: key + store>(
 ) {
     // Verify the LaunchOperatorCap matches the Phase's registered Launch ID.
     cap.authorize(self.launch_id());
-    // Assert the value is greater than the current max mint count for an address.
-    assert!(max_mint_count_addr > self.max_mint_count_addr, EMaxMintCountAddrNotChanged);
     // Assert the value does not exceed the max mint count for the phase.
     assert!(max_mint_count_addr <= self.max_mint_count_phase, EInvalidMaxAddressMint);
     // Update the Phase's `max_mint_count_addr` value.
@@ -384,8 +413,6 @@ public fun set_max_mint_count_phase<T: key + store>(
     cap.authorize(launch.id());
     // Assert the value doesn't exceed the launch's total supply.
     assert!(max_mint_count_phase <= launch.items().length(), EExceedsLaunchSupply);
-    // Assert that the value is greater than the current max phase mint count.
-    assert!(max_mint_count_phase > self.max_mint_count_phase, EMaxPhaseMintCountTooLow);
     // Assert the value is greater than the current max mint count for an address.
     assert!(max_mint_count_phase > self.max_mint_count_addr, EMaxPhaseMintCountTooLow);
     // Update the Phase's `max_mint_count_phase` value.
